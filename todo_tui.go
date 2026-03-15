@@ -17,38 +17,41 @@ func main() {
 	table := tview.NewTable().
 		SetSelectable(true, false)
 	table.SetBorder(true).
-		SetBorderColor(tcell.ColorGreen).
+		SetBorderColor(tcell.ColorDefault).
 		SetTitleColor(tcell.ColorGreen).
-		SetBackgroundColor(tcell.ColorBlack)
+		SetBackgroundColor(tcell.ColorDefault)
 	table.SetSelectedStyle(tcell.StyleDefault.
 		Background(tcell.ColorGreen).
 		Foreground(tcell.ColorBlack))
 
-	input := tview.NewInputField().SetLabel("Add: ").
-		SetFieldBackgroundColor(tcell.ColorBlack).
+	input := tview.NewInputField().SetLabel(" (A)dd: ").
+		SetFieldBackgroundColor(tcell.ColorDefault).
 		SetFieldTextColor(tcell.ColorGreen).
 		SetLabelColor(tcell.ColorGreen)
-	input.SetBackgroundColor(tcell.ColorBlack)
+	input.SetBackgroundColor(tcell.ColorDefault)
 
 	statusBar := tview.NewTextView().
 		SetTextAlign(tview.AlignRight).
 		SetTextColor(tcell.ColorGreen).
 		SetDynamicColors(false)
-	statusBar.SetBackgroundColor(tcell.ColorBlack)
+	statusBar.SetBackgroundColor(tcell.ColorDefault)
 
 	helpBox := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
 		SetTextColor(tcell.ColorGreen).
 		SetDynamicColors(false)
-	helpBox.SetBackgroundColor(tcell.ColorBlack).
+	helpBox.SetBackgroundColor(tcell.ColorDefault).
 		SetBorder(true).
 		SetBorderColor(tcell.ColorGreen).
 		SetTitle(" Keys ").
 		SetTitleColor(tcell.ColorGreen)
-	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns: save\nEsc: cancel")
+	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns: save\nEsc: cancel\n?/h: this help")
+
+	pages := tview.NewPages()
 
 	s := &state{
 		app:               app,
+		pages:             pages,
 		table:             table,
 		input:             input,
 		statusBar:         statusBar,
@@ -65,32 +68,40 @@ func main() {
 		s.handleInputDone(key)
 	})
 
-	// Content area: table + help box side by side
-	contentRow := tview.NewFlex().
-		SetDirection(tview.FlexColumn).
-		AddItem(table, 0, 3, true).
-		AddItem(helpBox, 22, 0, false)
-	contentRow.SetBackgroundColor(tcell.ColorBlack)
-
 	// Bottom row: input + status bar inline
 	bottomRow := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
 		AddItem(input, 0, 1, false).
 		AddItem(statusBar, 40, 0, false)
-	bottomRow.SetBackgroundColor(tcell.ColorBlack)
+	bottomRow.SetBackgroundColor(tcell.ColorDefault)
 
-	// Root: content + bottom row
-	root := tview.NewFlex().
+	// Main layout: table + bottom row
+	mainLayout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(contentRow, 0, 1, true).
+		AddItem(table, 0, 1, true).
 		AddItem(bottomRow, 1, 0, false)
-	root.SetBackgroundColor(tcell.ColorBlack)
+	mainLayout.SetBackgroundColor(tcell.ColorDefault)
+
+	// Help overlay: centered popup
+	helpOverlay := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			SetDirection(tview.FlexColumn).
+			AddItem(nil, 0, 1, false).
+			AddItem(helpBox, 24, 0, true).
+			AddItem(nil, 0, 1, false),
+			12, 0, true).
+		AddItem(nil, 0, 1, false)
+
+	pages.AddPage("main", mainLayout, true, true)
+	pages.AddPage("help", helpOverlay, true, false)
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()
 	s.updateChrome("Loaded TODO_tui.md")
 
-	if err := app.SetRoot(root, true).SetFocus(table).Run(); err != nil {
+	if err := app.SetRoot(pages, true).SetFocus(table).Run(); err != nil {
 		panic(err)
 	}
 }

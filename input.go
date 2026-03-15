@@ -9,6 +9,10 @@ import (
 )
 
 func (s *state) handleGlobalInput(event *tcell.EventKey) *tcell.EventKey {
+	if s.helpVisible {
+		s.toggleHelp()
+		return nil
+	}
 	if s.input.HasFocus() {
 		return event
 	}
@@ -29,6 +33,12 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 		}
 
 		switch r {
+		case 'q':
+			s.app.Stop()
+			return nil
+		case '?', 'h':
+			s.toggleHelp()
+			return nil
 		case 'c':
 			s.startEditMode()
 			return nil
@@ -72,7 +82,7 @@ func (s *state) handleInputDone(key tcell.Key) {
 func (s *state) startAddMode() {
 	s.mode = inputModeAdd
 	s.editIndex = -1
-	s.input.SetLabel("Add: ")
+	s.input.SetLabel(" Add: ")
 	s.input.SetText("")
 	s.clearJumpBuffer()
 	s.app.SetFocus(s.input)
@@ -122,7 +132,7 @@ func (s *state) commitInput() {
 
 	s.mode = inputModeAdd
 	s.editIndex = -1
-	s.input.SetLabel("Add: ")
+	s.input.SetLabel(" (A)dd: ")
 	s.input.SetText("")
 	s.app.SetFocus(s.table)
 	s.refreshList()
@@ -135,7 +145,7 @@ func (s *state) commitInput() {
 func (s *state) cancelInput() {
 	s.mode = inputModeAdd
 	s.editIndex = -1
-	s.input.SetLabel("Add: ")
+	s.input.SetLabel(" (A)dd: ")
 	s.input.SetText("")
 	s.app.SetFocus(s.table)
 	s.updateChrome("Input canceled")

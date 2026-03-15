@@ -16,6 +16,7 @@ const (
 
 type state struct {
 	app        *tview.Application
+	pages      *tview.Pages
 	table      *tview.Table
 	input      *tview.InputField
 	statusBar  *tview.TextView
@@ -29,6 +30,7 @@ type state struct {
 	status     string
 
 	lastListSelection int
+	helpVisible       bool
 }
 
 func (s *state) refreshList() {
@@ -40,7 +42,7 @@ func (s *state) refreshList() {
 	}
 
 	for i, item := range s.items {
-		color := tcell.ColorRed
+		color := tcell.ColorWhite
 		if item.checked {
 			color = tcell.ColorGreen
 		}
@@ -54,7 +56,7 @@ func (s *state) refreshList() {
 			prefix = "- [X] "
 		}
 
-		textCell := tview.NewTableCell(fmt.Sprintf("%s%s", prefix, item.text)).
+		textCell := tview.NewTableCell(tview.Escape(fmt.Sprintf("%s%s", prefix, item.text))).
 			SetTextColor(color).
 			SetExpansion(1)
 
@@ -69,6 +71,18 @@ func (s *state) refreshList() {
 		s.lastListSelection = 0
 	}
 	s.table.Select(s.lastListSelection, 0)
+}
+
+func (s *state) toggleHelp() {
+	if s.helpVisible {
+		s.pages.HidePage("help")
+		s.helpVisible = false
+		s.app.SetFocus(s.table)
+	} else {
+		s.pages.ShowPage("help")
+		s.helpVisible = true
+		s.app.SetFocus(s.helpBox)
+	}
 }
 
 func (s *state) updateChrome(status string) {
