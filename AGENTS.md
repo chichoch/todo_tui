@@ -21,9 +21,11 @@ go build -o todo_tui .
 ## Install & Uninstall
 
 ```sh
-./install.sh    # builds and installs to ~/.local/bin/todo-tui
-./uninstall.sh  # removes binary and optionally data
+./install.sh    # builds and installs to ~/.todo-tui/bin/ with a symlink in ~/.local/bin/
+./uninstall.sh  # removes all files and directories created by install.sh
 ```
+
+When modifying `install.sh` to create new files or directories, always update `uninstall.sh` to remove them so that uninstall fully reverses an install.
 
 ## Testing
 
