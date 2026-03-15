@@ -9,6 +9,18 @@ import (
 )
 
 func (s *state) handleGlobalInput(event *tcell.EventKey) *tcell.EventKey {
+	if s.confirmQuit {
+		return s.handleQuitInput(event)
+	}
+	if event.Key() == tcell.KeyCtrlC {
+		if s.dirty {
+			s.showQuitDialog()
+			return nil
+		}
+		s.stopped = true
+		s.app.Stop()
+		return nil
+	}
 	if s.helpVisible {
 		s.toggleHelp()
 		return nil
@@ -34,6 +46,11 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 
 		switch r {
 		case 'q':
+			if s.dirty {
+				s.showQuitDialog()
+				return nil
+			}
+			s.stopped = true
 			s.app.Stop()
 			return nil
 		case '?', 'h':
@@ -49,7 +66,7 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 			s.save()
 			return nil
 		}
-	case tcell.KeyEnter:
+	case tcell.KeyEnter, tcell.KeySpace:
 		if s.jumpBuffer != "" {
 			s.commitJump()
 			return nil

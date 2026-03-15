@@ -63,6 +63,8 @@ func main() {
 		lastListSelection: 0,
 	}
 
+	// quitDialog is set after quitOverlay is built (below)
+
 	table.SetInputCapture(s.handleListInput)
 	input.SetDoneFunc(func(key tcell.Key) {
 		s.handleInputDone(key)
@@ -94,8 +96,33 @@ func main() {
 			12, 0, true).
 		AddItem(nil, 0, 1, false)
 
+	quitLabel := tview.NewTextView().
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(tcell.ColorGreen).
+		SetDynamicColors(false)
+	quitLabel.SetBackgroundColor(tcell.ColorDefault).
+		SetBorder(true).
+		SetBorderColor(tcell.ColorGreen).
+		SetTitle(" Unsaved Changes ").
+		SetTitleColor(tcell.ColorGreen)
+	quitLabel.SetText("Save before quitting?\n\n(y)es  (n)o  (Esc) cancel")
+
+	quitOverlay := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			SetDirection(tview.FlexColumn).
+			AddItem(nil, 0, 1, false).
+			AddItem(quitLabel, 32, 0, true).
+			AddItem(nil, 0, 1, false),
+			7, 0, true).
+		AddItem(nil, 0, 1, false)
+
+	s.quitDialog = quitOverlay
+
 	pages.AddPage("main", mainLayout, true, true)
 	pages.AddPage("help", helpOverlay, true, false)
+	pages.AddPage("quit", quitOverlay, true, false)
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()

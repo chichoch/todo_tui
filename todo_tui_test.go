@@ -13,17 +13,24 @@ func newTestState() *state {
 	app := tview.NewApplication()
 	table := tview.NewTable().SetSelectable(true, false)
 	input := tview.NewInputField().SetLabel("Add: ")
+	pages := tview.NewPages()
+	quitDialog := tview.NewFlex()
 
-	root := tview.NewFlex().
+	mainLayout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(table, 0, 1, true).
 		AddItem(input, 1, 0, false)
-	app.SetRoot(root, true)
+
+	pages.AddPage("main", mainLayout, true, true)
+	pages.AddPage("quit", quitDialog, true, false)
+	app.SetRoot(pages, true)
 
 	s := &state{
 		app:               app,
+		pages:             pages,
 		table:             table,
 		input:             input,
+		quitDialog:        quitDialog,
 		items:             []Item{{text: "first"}, {text: "second"}, {text: "third"}},
 		filePath:          "",
 		mode:              inputModeAdd,
@@ -169,6 +176,105 @@ func TestHandleInputDone_EscapeCancels(t *testing.T) {
 	}
 	if s.input.GetText() != "" {
 		t.Error("expected input text to be cleared after escape")
+	}
+}
+
+func TestHandleListInput_QuitClean(t *testing.T) {
+	s := newTestState()
+	s.dirty = false
+
+	result := s.handleListInput(runeEvent('q'))
+	if result != nil {
+		t.Error("expected 'q' to be consumed")
+	}
+	if !s.stopped {
+		t.Error("expected app to be stopped when not dirty")
+	}
+}
+
+func TestHandleListInput_QuitDirtyShowsDialog(t *testing.T) {
+	s := newTestState()
+	s.dirty = true
+
+	result := s.handleListInput(runeEvent('q'))
+	if result != nil {
+		t.Error("expected 'q' to be consumed")
+	}
+	if !s.confirmQuit {
+		t.Error("expected confirmQuit to be true when dirty")
+	}
+	if s.stopped {
+		t.Error("expected app NOT to be stopped yet")
+	}
+}
+
+func TestHandleQuitInput_Yes(t *testing.T) {
+	s := newTestState()
+	dir := t.TempDir()
+	s.filePath = filepath.Join(dir, "test.md")
+	s.dirty = true
+	s.confirmQuit = true
+
+	s.handleQuitInput(runeEvent('y'))
+	if !s.stopped {
+		t.Error("expected app to be stopped after 'y'")
+	}
+	if s.dirty {
+		t.Error("expected dirty to be false after save")
+	}
+}
+
+func TestHandleQuitInput_No(t *testing.T) {
+	s := newTestState()
+	s.dirty = true
+	s.confirmQuit = true
+
+	s.handleQuitInput(runeEvent('n'))
+	if !s.stopped {
+		t.Error("expected app to be stopped after 'n'")
+	}
+}
+
+func TestHandleQuitInput_Escape(t *testing.T) {
+	s := newTestState()
+	s.dirty = true
+	s.confirmQuit = true
+
+	s.handleQuitInput(keyEvent(tcell.KeyEscape))
+	if s.confirmQuit {
+		t.Error("expected confirmQuit to be false after Escape")
+	}
+	if s.stopped {
+		t.Error("expected app NOT to be stopped after Escape")
+	}
+}
+
+func TestHandleGlobalInput_CtrlCDirtyShowsDialog(t *testing.T) {
+	s := newTestState()
+	s.dirty = true
+
+	result := s.handleGlobalInput(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModCtrl))
+	if result != nil {
+		t.Error("expected Ctrl-C to be consumed")
+	}
+	if !s.confirmQuit {
+		t.Error("expected confirmQuit to be true")
+	}
+	if s.stopped {
+		t.Error("expected app NOT to be stopped yet")
+	}
+}
+
+func TestHandleGlobalInput_CtrlCCleanStops(t *testing.T) {
+	s := newTestState()
+	s.dirty = false
+
+	result := s.handleGlobalInput(tcell.NewEventKey(tcell.KeyCtrlC, 0, tcell.ModCtrl))
+	if result != nil {
+		t.Error("expected Ctrl-C to be consumed")
+	}
+	if !s.stopped {
+		t.Error("expected app to be stopped when not dirty")
 	}
 }
 
