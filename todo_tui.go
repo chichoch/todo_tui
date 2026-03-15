@@ -45,7 +45,7 @@ func main() {
 		SetBorderColor(tcell.ColorGreen).
 		SetTitle(" Keys ").
 		SetTitleColor(tcell.ColorGreen)
-	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns: save\nEsc: cancel\n?/h: this help")
+		helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns/w: save\nEsc: cancel\n?/h: this help\n\nq: exit")
 
 	pages := tview.NewPages()
 

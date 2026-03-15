@@ -69,7 +69,7 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 		case 'd':
 			s.deleteSelected()
 			return nil
-		case 's':
+		case 's', 'w':
 			s.save()
 			return nil
 		}
