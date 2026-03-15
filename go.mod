@@ -1,4 +1,4 @@
-module todo_tui
+module todo-tui
 
 go 1.26.1
 

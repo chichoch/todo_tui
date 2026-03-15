@@ -45,6 +45,13 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 		}
 
 		switch r {
+		case ' ':
+			if s.jumpBuffer != "" {
+				s.commitJump()
+				return nil
+			}
+			s.toggleSelected()
+			return nil
 		case 'q':
 			if s.dirty {
 				s.showQuitDialog()
@@ -66,7 +73,7 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 			s.save()
 			return nil
 		}
-	case tcell.KeyEnter, tcell.KeySpace:
+	case tcell.KeyEnter:
 		if s.jumpBuffer != "" {
 			s.commitJump()
 			return nil
@@ -125,6 +132,11 @@ func (s *state) startEditMode() {
 func (s *state) commitInput() {
 	text := strings.TrimSpace(s.input.GetText())
 	if text == "" {
+		if s.mode == inputModeAdd {
+			s.input.SetText("")
+			s.updateChrome("Ignored empty input")
+			return
+		}
 		s.cancelInput()
 		s.updateChrome("Ignored empty input")
 		return
@@ -147,16 +159,22 @@ func (s *state) commitInput() {
 		status = fmt.Sprintf("Added item %d", len(s.items))
 	}
 
-	s.mode = inputModeAdd
-	s.editIndex = -1
-	s.input.SetLabel(" (A)dd: ")
-	s.input.SetText("")
-	s.app.SetFocus(s.table)
 	s.refreshList()
 	if status == "" {
 		status = "Input applied"
 	}
-	s.updateChrome(status)
+
+	if s.mode == inputModeAdd {
+		s.input.SetText("")
+		s.updateChrome(status)
+	} else {
+		s.mode = inputModeAdd
+		s.editIndex = -1
+		s.input.SetLabel(" Add: ")
+		s.input.SetText("")
+		s.app.SetFocus(s.table)
+		s.updateChrome(status)
+	}
 }
 
 func (s *state) cancelInput() {
@@ -220,7 +238,7 @@ func (s *state) save() {
 	}
 
 	s.dirty = false
-	s.updateChrome("Saved TODO_tui.md")
+	s.updateChrome("Saved TODO-tui.md")
 }
 
 func (s *state) appendJumpDigit(digit rune) {

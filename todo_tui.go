@@ -5,7 +5,7 @@ import (
 	"github.com/rivo/tview"
 )
 
-const todoFileName = "TODO_tui.md"
+const todoFileName = "TODO-tui.md"
 
 func main() {
 	items, err := loadItems(todoFileName)
@@ -126,7 +126,7 @@ func main() {
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()
-	s.updateChrome("Loaded TODO_tui.md")
+	s.updateChrome("Loaded TODO-tui.md")
 
 	if err := app.SetRoot(pages, true).SetFocus(table).Run(); err != nil {
 		panic(err)
