@@ -9,7 +9,7 @@ A terminal-based TODO list manager built with Go, using [tview](https://github.c
 - `input.go` — Input handling and item operations (add, edit, delete, toggle, jump, save).
 - `ui.go` — State struct, list rendering (`refreshList`), and status bar (`updateChrome`).
 - `todo_tui_test.go` — Tests for input handlers and file I/O.
-- `TODO_tui.md` — The checklist data file (Markdown checkboxes).
+- `TODO-tui.md` — The checklist data file (Markdown checkboxes).
 
 ## Build & Run
 
@@ -17,6 +17,15 @@ A terminal-based TODO list manager built with Go, using [tview](https://github.c
 go build -o todo_tui .
 ./todo_tui
 ```
+
+## Install & Uninstall
+
+```sh
+./install.sh    # builds and installs to ~/.todo-tui/bin/ with a symlink in ~/.local/bin/
+./uninstall.sh  # removes all files and directories created by install.sh
+```
+
+When modifying `install.sh` to create new files or directories, always update `uninstall.sh` to remove them so that uninstall fully reverses an install.
 
 ## Testing
 

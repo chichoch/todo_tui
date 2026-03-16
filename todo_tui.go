@@ -8,6 +8,8 @@ import (
 	"github.com/rivo/tview"
 )
 
+const todoFileName = "TODO-tui.md"
+
 func main() {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -80,7 +82,7 @@ func main() {
 		SetBorderColor(tcell.ColorGreen).
 		SetTitle(" Keys ").
 		SetTitleColor(tcell.ColorGreen)
-	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns: save\nEsc: cancel\n?/h: this help")
+	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns/w: save\nEsc: cancel\n?/h: this help\n\nq: exit")
 
 	pages := tview.NewPages()
 
@@ -98,6 +100,8 @@ func main() {
 		editIndex:         -1,
 		lastListSelection: 0,
 	}
+
+	// quitDialog is set after quitOverlay is built (below)
 
 	table.SetInputCapture(s.handleListInput)
 	input.SetDoneFunc(func(key tcell.Key) {
@@ -130,12 +134,37 @@ func main() {
 			12, 0, true).
 		AddItem(nil, 0, 1, false)
 
+	quitLabel := tview.NewTextView().
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(tcell.ColorGreen).
+		SetDynamicColors(false)
+	quitLabel.SetBackgroundColor(tcell.ColorDefault).
+		SetBorder(true).
+		SetBorderColor(tcell.ColorGreen).
+		SetTitle(" Unsaved Changes ").
+		SetTitleColor(tcell.ColorGreen)
+	quitLabel.SetText("Save before quitting?\n\n(y)es  (n)o  (Esc) cancel")
+
+	quitOverlay := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			SetDirection(tview.FlexColumn).
+			AddItem(nil, 0, 1, false).
+			AddItem(quitLabel, 32, 0, true).
+			AddItem(nil, 0, 1, false),
+			7, 0, true).
+		AddItem(nil, 0, 1, false)
+
+	s.quitDialog = quitOverlay
+
 	pages.AddPage("main", mainLayout, true, true)
 	pages.AddPage("help", helpOverlay, true, false)
+	pages.AddPage("quit", quitOverlay, true, false)
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()
-	s.updateChrome("Loaded TODO_tui.md")
+	s.updateChrome("Loaded TODO-tui.md")
 
 	if err := app.SetRoot(pages, true).SetFocus(table).Run(); err != nil {
 		panic(err)

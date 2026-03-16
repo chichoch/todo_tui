@@ -32,6 +32,9 @@ type state struct {
 
 	lastListSelection int
 	helpVisible       bool
+	confirmQuit       bool
+	quitDialog        *tview.Flex
+	stopped           bool
 }
 
 func (s *state) refreshList() {
@@ -84,6 +87,41 @@ func (s *state) toggleHelp() {
 		s.helpVisible = true
 		s.app.SetFocus(s.helpBox)
 	}
+}
+
+func (s *state) showQuitDialog() {
+	s.confirmQuit = true
+	s.pages.ShowPage("quit")
+	s.app.SetFocus(s.quitDialog)
+}
+
+func (s *state) hideQuitDialog() {
+	s.confirmQuit = false
+	s.pages.HidePage("quit")
+	s.app.SetFocus(s.table)
+}
+
+func (s *state) handleQuitInput(event *tcell.EventKey) *tcell.EventKey {
+	if event.Key() == tcell.KeyRune {
+		switch event.Rune() {
+		case 'y', 'Y':
+			s.save()
+			s.confirmQuit = false
+			s.stopped = true
+			s.app.Stop()
+			return nil
+		case 'n', 'N':
+			s.confirmQuit = false
+			s.stopped = true
+			s.app.Stop()
+			return nil
+		}
+	}
+	if event.Key() == tcell.KeyEscape {
+		s.hideQuitDialog()
+		return nil
+	}
+	return nil
 }
 
 func (s *state) updateChrome(status string) {
