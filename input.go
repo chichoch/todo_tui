@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -197,13 +198,40 @@ func (s *state) deleteSelected() {
 }
 
 func (s *state) save() {
+	if s.cfg.FileCmdSave != "" {
+		// Save to a temp file, run the command, then clean up.
+		tmp, err := os.CreateTemp("", "todo_tui_save_*.md")
+		if err != nil {
+			s.updateChrome(fmt.Sprintf("Save failed: %v", err))
+			return
+		}
+		tmpPath := tmp.Name()
+		tmp.Close()
+
+		if err := saveItems(tmpPath, s.items); err != nil {
+			os.Remove(tmpPath)
+			s.updateChrome(fmt.Sprintf("Save failed: %v", err))
+			return
+		}
+
+		if err := runFileCmd(s.cfg.FileCmdSave, tmpPath); err != nil {
+			s.updateChrome(fmt.Sprintf("Save cmd failed (local copy kept at %s): %v", tmpPath, err))
+			return
+		}
+
+		os.Remove(tmpPath)
+		s.dirty = false
+		s.updateChrome("Saved via command")
+		return
+	}
+
 	if err := saveItems(s.filePath, s.items); err != nil {
 		s.updateChrome(fmt.Sprintf("Save failed: %v", err))
 		return
 	}
 
 	s.dirty = false
-	s.updateChrome("Saved TODO_tui.md")
+	s.updateChrome(fmt.Sprintf("Saved %s", s.filePath))
 }
 
 func (s *state) appendJumpDigit(digit rune) {

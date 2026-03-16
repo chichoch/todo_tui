@@ -23,6 +23,7 @@ type state struct {
 	helpBox    *tview.TextView
 	items      []Item
 	filePath   string
+	cfg        config
 	dirty      bool
 	mode       inputMode
 	editIndex  int

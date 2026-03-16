@@ -172,6 +172,65 @@ func TestHandleInputDone_EscapeCancels(t *testing.T) {
 	}
 }
 
+func TestLoadConfig(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "todo-tui.conf")
+	os.WriteFile(confPath, []byte(`# comment
+file-path = ~/Documents/TODO.md
+file-cmd-save = rclone copy $FILE gdrive:docs
+file-cmd-load = rclone copy gdrive:docs/TODO.md $FILE
+`), 0o644)
+
+	cfg, err := loadConfigFrom(confPath)
+	if err != nil {
+		t.Fatalf("loadConfigFrom failed: %v", err)
+	}
+
+	home, _ := os.UserHomeDir()
+	wantPath := filepath.Join(home, "Documents/TODO.md")
+	if cfg.FilePath != wantPath {
+		t.Errorf("FilePath = %q, want %q", cfg.FilePath, wantPath)
+	}
+	if cfg.FileCmdSave != "rclone copy $FILE gdrive:docs" {
+		t.Errorf("FileCmdSave = %q", cfg.FileCmdSave)
+	}
+	if cfg.FileCmdLoad != "rclone copy gdrive:docs/TODO.md $FILE" {
+		t.Errorf("FileCmdLoad = %q", cfg.FileCmdLoad)
+	}
+}
+
+func TestLoadConfigMissing(t *testing.T) {
+	cfg, err := loadConfigFrom("/nonexistent/path/todo-tui.conf")
+	if err != nil {
+		t.Fatalf("expected no error for missing config, got %v", err)
+	}
+	if cfg.FilePath != "" || cfg.FileCmdSave != "" || cfg.FileCmdLoad != "" {
+		t.Errorf("expected zero-value config, got %+v", cfg)
+	}
+}
+
+func TestSaveWithFileCmdSave(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "dest.md")
+
+	s := newTestState()
+	s.cfg.FileCmdSave = "cp $FILE " + dest
+
+	s.save()
+
+	if s.dirty {
+		t.Error("expected dirty to be false after save")
+	}
+
+	items, err := loadItems(dest)
+	if err != nil {
+		t.Fatalf("loadItems from dest failed: %v", err)
+	}
+	if len(items) != len(s.items) {
+		t.Errorf("expected %d items at dest, got %d", len(s.items), len(items))
+	}
+}
+
 func TestLoadAndSaveItems(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.md")

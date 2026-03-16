@@ -1,16 +1,51 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
-const todoFileName = "TODO_tui.md"
-
 func main() {
-	items, err := loadItems(todoFileName)
+	cfg, err := loadConfig()
 	if err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	filePath := resolveFilePath(cfg)
+
+	// If a load command is configured, fetch the file first.
+	var loadTmpFile string
+	if cfg.FileCmdLoad != "" {
+		tmp, err := os.CreateTemp("", "todo_tui_load_*.md")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create temp file: %v\n", err)
+			os.Exit(1)
+		}
+		tmp.Close()
+		loadTmpFile = tmp.Name()
+
+		if err := runFileCmd(cfg.FileCmdLoad, loadTmpFile); err != nil {
+			os.Remove(loadTmpFile)
+			fmt.Fprintf(os.Stderr, "file-cmd-load: %v\n", err)
+			os.Exit(1)
+		}
+		filePath = loadTmpFile
+	}
+
+	items, err := loadItems(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Clean up temp file after loading.
+	if loadTmpFile != "" {
+		os.Remove(loadTmpFile)
+		filePath = resolveFilePath(cfg)
 	}
 
 	app := tview.NewApplication()
@@ -57,7 +92,8 @@ func main() {
 		statusBar:         statusBar,
 		helpBox:           helpBox,
 		items:             items,
-		filePath:          todoFileName,
+		filePath:          filePath,
+		cfg:               cfg,
 		mode:              inputModeAdd,
 		editIndex:         -1,
 		lastListSelection: 0,
