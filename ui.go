@@ -21,9 +21,9 @@ type state struct {
 	input      *tview.InputField
 	statusBar  *tview.TextView
 	helpBox    *tview.TextView
-	items      []Item
-	filePath   string
-	cfg        config
+	items       []Item
+	filePath    string
+	cfg         config
 	dirty      bool
 	mode       inputMode
 	editIndex  int
@@ -35,6 +35,9 @@ type state struct {
 	confirmQuit       bool
 	quitDialog        *tview.Flex
 	stopped           bool
+
+	savingLabel *tview.TextView
+	saveDone    chan struct{}
 }
 
 func (s *state) refreshList() {
@@ -122,6 +125,16 @@ func (s *state) handleQuitInput(event *tcell.EventKey) *tcell.EventKey {
 		return nil
 	}
 	return nil
+}
+
+func (s *state) showSaving(msg string) {
+	s.savingLabel.SetText(msg)
+	s.pages.ShowPage("saving")
+}
+
+func (s *state) hideSaving() {
+	s.pages.HidePage("saving")
+	s.app.SetFocus(s.table)
 }
 
 func (s *state) updateChrome(status string) {

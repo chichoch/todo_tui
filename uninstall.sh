@@ -55,4 +55,10 @@ if [ -d "$LOCAL_APP_DIR" ]; then
   echo "Removed $LOCAL_APP_DIR"
 fi
 
+CONFIG_DIR="$HOME/.config/todo-tui"
+if [ -d "$CONFIG_DIR" ]; then
+  rm -rf "$CONFIG_DIR"
+  echo "Removed $CONFIG_DIR"
+fi
+
 echo "Done."

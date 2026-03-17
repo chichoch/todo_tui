@@ -10,6 +10,7 @@ import (
 )
 
 type config struct {
+	FileName    string
 	FilePath    string
 	FileCmdSave string
 	FileCmdLoad string
@@ -57,6 +58,8 @@ func loadConfigFrom(path string) (config, error) {
 		value = strings.TrimSpace(value)
 
 		switch key {
+		case "$FILE":
+			cfg.FileName = value
 		case "file-path":
 			cfg.FilePath = expandHome(value)
 		case "file-cmd-save":
@@ -66,7 +69,15 @@ func loadConfigFrom(path string) (config, error) {
 		}
 	}
 
-	return cfg, scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return cfg, err
+	}
+
+	if (cfg.FileCmdSave == "") != (cfg.FileCmdLoad == "") {
+		return cfg, fmt.Errorf("file-cmd-save and file-cmd-load must both be set if either is used")
+	}
+
+	return cfg, nil
 }
 
 func expandHome(path string) string {
@@ -79,19 +90,35 @@ func expandHome(path string) string {
 	return path
 }
 
-func resolveFilePath(cfg config) string {
-	if cfg.FilePath != "" {
-		return cfg.FilePath
+func resolveFileName(cfg config) string {
+	if cfg.FileName != "" {
+		return cfg.FileName + ".md"
 	}
 	return "TODO_tui.md"
 }
 
-func runFileCmd(cmdTemplate, filePath string) error {
-	expanded := strings.ReplaceAll(cmdTemplate, "$FILE", filePath)
+func resolveFilePath(cfg config) string {
+	name := resolveFileName(cfg)
+	if cfg.FilePath != "" {
+		return filepath.Join(cfg.FilePath, name)
+	}
+	return name
+}
+
+func runFileCmd(cmdTemplate, dir, fileName string) error {
+	expanded := strings.ReplaceAll(cmdTemplate, "$PATH", dir)
+	expanded = strings.ReplaceAll(expanded, "$FILE", fileName)
 	cmd := exec.Command("sh", "-c", expanded)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("command %q failed: %w", expanded, err)
 	}
 	return nil
+}
+
+func configFileName(cfg config) string {
+	if cfg.FileName != "" {
+		return cfg.FileName
+	}
+	return "TODO_tui"
 }

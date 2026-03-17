@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -234,29 +235,52 @@ func (s *state) deleteSelected() {
 
 func (s *state) save() {
 	if s.cfg.FileCmdSave != "" {
-		// Save to a temp file, run the command, then clean up.
-		tmp, err := os.CreateTemp("", "todo_tui_save_*.md")
-		if err != nil {
-			s.updateChrome(fmt.Sprintf("Save failed: %v", err))
-			return
-		}
-		tmpPath := tmp.Name()
-		tmp.Close()
+		s.showSaving("Saving...")
+		itemsCopy := make([]Item, len(s.items))
+		copy(itemsCopy, s.items)
+		done := make(chan struct{})
+		s.saveDone = done
 
-		if err := saveItems(tmpPath, s.items); err != nil {
-			os.Remove(tmpPath)
-			s.updateChrome(fmt.Sprintf("Save failed: %v", err))
-			return
-		}
+		go func() {
+			status := ""
+			ok := true
 
-		if err := runFileCmd(s.cfg.FileCmdSave, tmpPath); err != nil {
-			s.updateChrome(fmt.Sprintf("Save cmd failed (local copy kept at %s): %v", tmpPath, err))
-			return
-		}
+			tmpDir, err := os.MkdirTemp("", "todo_tui_save_")
+			if err != nil {
+				status = fmt.Sprintf("Save failed: %v", err)
+				ok = false
+			}
 
-		os.Remove(tmpPath)
-		s.dirty = false
-		s.updateChrome("Saved via command")
+			if ok {
+				tmpFile := filepath.Join(tmpDir, resolveFileName(s.cfg))
+				if err := saveItems(tmpFile, itemsCopy); err != nil {
+					status = fmt.Sprintf("Save failed: %v", err)
+					ok = false
+				}
+			}
+
+			if ok {
+				if err := runFileCmd(s.cfg.FileCmdSave, tmpDir, configFileName(s.cfg)); err != nil {
+					status = fmt.Sprintf("Save cmd failed: %v", err)
+					ok = false
+				}
+			}
+
+			if tmpDir != "" {
+				os.RemoveAll(tmpDir)
+			}
+
+			if ok {
+				status = "Saved via command"
+				s.dirty = false
+			}
+
+			close(done)
+			s.app.QueueUpdateDraw(func() {
+				s.hideSaving()
+				s.updateChrome(status)
+			})
+		}()
 		return
 	}
 
@@ -264,9 +288,8 @@ func (s *state) save() {
 		s.updateChrome(fmt.Sprintf("Save failed: %v", err))
 		return
 	}
-
 	s.dirty = false
-	s.updateChrome("Saved TODO-tui.md")
+	s.updateChrome("Saved " + s.filePath)
 }
 
 func (s *state) appendJumpDigit(digit rune) {

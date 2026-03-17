@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -21,8 +22,12 @@ func newTestState() *state {
 		AddItem(table, 0, 1, true).
 		AddItem(input, 1, 0, false)
 
+	savingLabel := tview.NewTextView()
+	savingOverlay := tview.NewFlex().AddItem(savingLabel, 0, 1, false)
+
 	pages.AddPage("main", mainLayout, true, true)
 	pages.AddPage("quit", quitDialog, true, false)
+	pages.AddPage("saving", savingOverlay, true, false)
 	app.SetRoot(pages, true)
 
 	s := &state{
@@ -31,6 +36,7 @@ func newTestState() *state {
 		table:             table,
 		input:             input,
 		quitDialog:        quitDialog,
+		savingLabel:       savingLabel,
 		items:             []Item{{text: "first"}, {text: "second"}, {text: "third"}},
 		filePath:          "",
 		mode:              inputModeAdd,
@@ -183,9 +189,10 @@ func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	confPath := filepath.Join(dir, "todo-tui.conf")
 	os.WriteFile(confPath, []byte(`# comment
-file-path = ~/Documents/TODO.md
-file-cmd-save = rclone copy $FILE gdrive:docs
-file-cmd-load = rclone copy gdrive:docs/TODO.md $FILE
+$FILE = MyTodo
+file-path = ~/Documents/
+file-cmd-save = rclone copy $PATH gdrive:docs/$FILE
+file-cmd-load = rclone copy gdrive:docs/$FILE $PATH
 `), 0o644)
 
 	cfg, err := loadConfigFrom(confPath)
@@ -193,16 +200,45 @@ file-cmd-load = rclone copy gdrive:docs/TODO.md $FILE
 		t.Fatalf("loadConfigFrom failed: %v", err)
 	}
 
+	if cfg.FileName != "MyTodo" {
+		t.Errorf("FileName = %q, want %q", cfg.FileName, "MyTodo")
+	}
 	home, _ := os.UserHomeDir()
-	wantPath := filepath.Join(home, "Documents/TODO.md")
+	wantPath := filepath.Join(home, "Documents")
 	if cfg.FilePath != wantPath {
 		t.Errorf("FilePath = %q, want %q", cfg.FilePath, wantPath)
 	}
-	if cfg.FileCmdSave != "rclone copy $FILE gdrive:docs" {
+	wantResolved := filepath.Join(home, "Documents", "MyTodo.md")
+	if got := resolveFilePath(cfg); got != wantResolved {
+		t.Errorf("resolveFilePath = %q, want %q", got, wantResolved)
+	}
+	if cfg.FileCmdSave != "rclone copy $PATH gdrive:docs/$FILE" {
 		t.Errorf("FileCmdSave = %q", cfg.FileCmdSave)
 	}
-	if cfg.FileCmdLoad != "rclone copy gdrive:docs/TODO.md $FILE" {
+	if cfg.FileCmdLoad != "rclone copy gdrive:docs/$FILE $PATH" {
 		t.Errorf("FileCmdLoad = %q", cfg.FileCmdLoad)
+	}
+}
+
+func TestLoadConfigOnlySaveErrors(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "todo-tui.conf")
+	os.WriteFile(confPath, []byte("file-cmd-save = cp $PATH /tmp/backup\n"), 0o644)
+
+	_, err := loadConfigFrom(confPath)
+	if err == nil {
+		t.Fatal("expected error when only file-cmd-save is set")
+	}
+}
+
+func TestLoadConfigOnlyLoadErrors(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "todo-tui.conf")
+	os.WriteFile(confPath, []byte("file-cmd-load = cp /tmp/backup $PATH\n"), 0o644)
+
+	_, err := loadConfigFrom(confPath)
+	if err == nil {
+		t.Fatal("expected error when only file-cmd-load is set")
 	}
 }
 
@@ -218,18 +254,35 @@ func TestLoadConfigMissing(t *testing.T) {
 
 func TestSaveWithFileCmdSave(t *testing.T) {
 	dir := t.TempDir()
-	dest := filepath.Join(dir, "dest.md")
+	destDir := filepath.Join(dir, "dest")
+	os.MkdirAll(destDir, 0o755)
 
 	s := newTestState()
-	s.cfg.FileCmdSave = "cp $FILE " + dest
+	s.cfg.FileName = "Test"
+	// cp copies files from $PATH dir to dest; $FILE is the raw config name.
+	s.cfg.FileCmdSave = "cp $PATH/Test.md " + destDir + "/"
 
 	s.save()
+
+	// save() is async when FileCmdSave is set; wait for it to finish.
+	select {
+	case <-s.saveDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for async save to complete")
+	}
 
 	if s.dirty {
 		t.Error("expected dirty to be false after save")
 	}
 
-	items, err := loadItems(dest)
+	// No local file should be written.
+	localFile := filepath.Join(dir, "Test.md")
+	if _, err := os.Stat(localFile); err == nil {
+		t.Error("expected no local file to be written when file-cmd-save is set")
+	}
+
+	// The command should have copied it to dest.
+	items, err := loadItems(filepath.Join(destDir, "Test.md"))
 	if err != nil {
 		t.Fatalf("loadItems from dest failed: %v", err)
 	}

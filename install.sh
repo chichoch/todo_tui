@@ -44,10 +44,22 @@ if [ "$MODE" = "system" ]; then
     exit 0
 fi
 
+CONFIG_DIR="$HOME/.config/todo-tui"
+CONFIG_FILE="$CONFIG_DIR/todo-tui.conf"
+
 echo "Installing binary to $LOCAL_APP_DIR/$BIN_NAME..."
 mkdir -p "$LOCAL_APP_DIR" "$LOCAL_BIN_DIR"
 install -m 0755 "$TMP_BIN" "$LOCAL_APP_DIR/$BIN_NAME"
 ln -sf "$LOCAL_APP_DIR/$BIN_NAME" "$LOCAL_BIN_DIR/$BIN_NAME"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    mkdir -p "$CONFIG_DIR"
+    cp "$SCRIPT_DIR/todo-tui.conf" "$CONFIG_FILE"
+    echo "Installed default config to $CONFIG_FILE"
+else
+    echo "Config already exists at $CONFIG_FILE, skipping."
+fi
 
 case ":$PATH:" in
     *":$LOCAL_BIN_DIR:"*) ;;

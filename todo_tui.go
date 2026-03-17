@@ -3,12 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
-
-const todoFileName = "TODO-tui.md"
 
 func main() {
 	cfg, err := loadConfig()
@@ -19,35 +18,37 @@ func main() {
 
 	filePath := resolveFilePath(cfg)
 
-	// If a load command is configured, fetch the file first.
-	var loadTmpFile string
+	// If a load command is configured, fetch the file to a temp directory.
+	var loadStatus string
+	var items []Item
 	if cfg.FileCmdLoad != "" {
-		tmp, err := os.CreateTemp("", "todo_tui_load_*.md")
+		tmpDir, err := os.MkdirTemp("", "todo_tui_load_")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to create temp file: %v\n", err)
+			fmt.Fprintf(os.Stderr, "failed to create temp dir: %v\n", err)
 			os.Exit(1)
 		}
-		tmp.Close()
-		loadTmpFile = tmp.Name()
 
-		if err := runFileCmd(cfg.FileCmdLoad, loadTmpFile); err != nil {
-			os.Remove(loadTmpFile)
-			fmt.Fprintf(os.Stderr, "file-cmd-load: %v\n", err)
+		if err := runFileCmd(cfg.FileCmdLoad, tmpDir, configFileName(cfg)); err != nil {
+			os.RemoveAll(tmpDir)
+			loadStatus = fmt.Sprintf("file-cmd-load failed: %v (starting empty)", err)
+		} else {
+			tmpFile := filepath.Join(tmpDir, resolveFileName(cfg))
+			items, err = loadItems(tmpFile)
+			os.RemoveAll(tmpDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "load: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+
+	if items == nil {
+		var err error
+		items, err = loadItems(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load: %v\n", err)
 			os.Exit(1)
 		}
-		filePath = loadTmpFile
-	}
-
-	items, err := loadItems(filePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "load: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Clean up temp file after loading.
-	if loadTmpFile != "" {
-		os.Remove(loadTmpFile)
-		filePath = resolveFilePath(cfg)
 	}
 
 	app := tview.NewApplication()
@@ -158,13 +159,40 @@ func main() {
 
 	s.quitDialog = quitOverlay
 
+	savingLabel := tview.NewTextView().
+		SetTextAlign(tview.AlignCenter).
+		SetTextColor(tcell.ColorGreen).
+		SetDynamicColors(false)
+	savingLabel.SetBackgroundColor(tcell.ColorDefault).
+		SetBorder(true).
+		SetBorderColor(tcell.ColorGreen).
+		SetTitleColor(tcell.ColorGreen)
+
+	savingOverlay := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			SetDirection(tview.FlexColumn).
+			AddItem(nil, 0, 1, false).
+			AddItem(savingLabel, 20, 0, false).
+			AddItem(nil, 0, 1, false),
+			3, 0, false).
+		AddItem(nil, 0, 1, false)
+
+	s.savingLabel = savingLabel
+
 	pages.AddPage("main", mainLayout, true, true)
 	pages.AddPage("help", helpOverlay, true, false)
 	pages.AddPage("quit", quitOverlay, true, false)
+	pages.AddPage("saving", savingOverlay, true, false)
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()
-	s.updateChrome("Loaded TODO-tui.md")
+	if loadStatus != "" {
+		s.updateChrome(loadStatus)
+	} else {
+		s.updateChrome("Loaded " + filePath)
+	}
 
 	if err := app.SetRoot(pages, true).SetFocus(table).Run(); err != nil {
 		panic(err)
