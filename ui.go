@@ -22,6 +22,7 @@ type state struct {
 	statusBar  *tview.TextView
 	helpBox    *tview.TextView
 	items      []Item
+	fileCtx    *fileContext
 	filePath   string
 	dirty      bool
 	mode       inputMode

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gdamore/tcell/v2"
@@ -32,6 +33,7 @@ func newTestState() *state {
 		input:             input,
 		quitDialog:        quitDialog,
 		items:             []Item{{text: "first"}, {text: "second"}, {text: "third"}},
+		fileCtx:           &fileContext{},
 		filePath:          "",
 		mode:              inputModeAdd,
 		editIndex:         -1,
@@ -283,7 +285,7 @@ func TestLoadAndSaveItems(t *testing.T) {
 	path := filepath.Join(dir, "test.md")
 	os.WriteFile(path, []byte("# TODO\n- [x] done\n- [ ] pending\n"), 0o644)
 
-	items, err := loadItems(path)
+	items, ctx, err := loadItems(path)
 	if err != nil {
 		t.Fatalf("loadItems failed: %v", err)
 	}
@@ -298,15 +300,58 @@ func TestLoadAndSaveItems(t *testing.T) {
 	}
 
 	items = append(items, Item{text: "new"})
-	if err := saveItems(path, items); err != nil {
+	if err := saveItems(path, items, ctx); err != nil {
 		t.Fatalf("saveItems failed: %v", err)
 	}
 
-	reloaded, err := loadItems(path)
+	reloaded, _, err := loadItems(path)
 	if err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}
 	if len(reloaded) != 3 {
 		t.Fatalf("expected 3 items after save, got %d", len(reloaded))
+	}
+
+	// Verify the header and non-checklist content was preserved.
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "# TODO") {
+		t.Error("expected original '# TODO' header to be preserved")
+	}
+}
+
+func TestSavePreservesNonChecklistContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "# My Notes\n\nSome description here.\n\n- [x] task one\n- [ ] task two\n\nFooter text.\n"
+	os.WriteFile(path, []byte(original), 0o644)
+
+	items, ctx, err := loadItems(path)
+	if err != nil {
+		t.Fatalf("loadItems failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+
+	// Add a new item and save.
+	items = append(items, Item{text: "task three"})
+	if err := saveItems(path, items, ctx); err != nil {
+		t.Fatalf("saveItems failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "# My Notes") {
+		t.Error("expected '# My Notes' header to be preserved")
+	}
+	if !strings.Contains(content, "Some description here.") {
+		t.Error("expected description text to be preserved")
+	}
+	if !strings.Contains(content, "Footer text.") {
+		t.Error("expected footer text to be preserved")
+	}
+	if !strings.Contains(content, "- [ ] task three") {
+		t.Error("expected new item to be appended")
 	}
 }

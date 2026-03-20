@@ -1,14 +1,30 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
-const todoFileName = "TODO-tui.md"
-
 func main() {
-	items, err := loadItems(todoFileName)
+	filePath := "TODO-tui.md"
+	if len(os.Args) > 2 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [file.md]\n", filepath.Base(os.Args[0]))
+		os.Exit(1)
+	}
+	if len(os.Args) == 2 {
+		filePath = os.Args[1]
+		if !strings.HasSuffix(strings.ToLower(filePath), ".md") {
+			fmt.Fprintf(os.Stderr, "Error: file must have a .md extension: %s\n", filePath)
+			os.Exit(1)
+		}
+	}
+
+	items, fileCtx, err := loadItems(filePath)
 	if err != nil {
 		panic(err)
 	}
@@ -57,7 +73,8 @@ func main() {
 		statusBar:         statusBar,
 		helpBox:           helpBox,
 		items:             items,
-		filePath:          todoFileName,
+		fileCtx:           fileCtx,
+		filePath:          filePath,
 		mode:              inputModeAdd,
 		editIndex:         -1,
 		lastListSelection: 0,
@@ -126,7 +143,7 @@ func main() {
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()
-	s.updateChrome("Loaded TODO-tui.md")
+	s.updateChrome(fmt.Sprintf("Loaded %s", filePath))
 
 	if err := app.SetRoot(pages, true).SetFocus(table).Run(); err != nil {
 		panic(err)

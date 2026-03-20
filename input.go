@@ -232,13 +232,13 @@ func (s *state) deleteSelected() {
 }
 
 func (s *state) save() {
-	if err := saveItems(s.filePath, s.items); err != nil {
+	if err := saveItems(s.filePath, s.items, s.fileCtx); err != nil {
 		s.updateChrome(fmt.Sprintf("Save failed: %v", err))
 		return
 	}
 
 	s.dirty = false
-	s.updateChrome("Saved TODO-tui.md")
+	s.updateChrome(fmt.Sprintf("Saved %s", s.filePath))
 }
 
 func (s *state) appendJumpDigit(digit rune) {
