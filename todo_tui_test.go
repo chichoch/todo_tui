@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,6 +195,7 @@ $FILE = MyTodo
 file-path = ~/Documents/
 file-cmd-save = rclone copy $PATH gdrive:docs/$FILE
 file-cmd-load = rclone copy gdrive:docs/$FILE $PATH
+history-file = ~/Documents/todo-tui-history.txt
 `), 0o644)
 
 	cfg, err := loadConfigFrom(confPath)
@@ -217,6 +220,10 @@ file-cmd-load = rclone copy gdrive:docs/$FILE $PATH
 	}
 	if cfg.FileCmdLoad != "rclone copy gdrive:docs/$FILE $PATH" {
 		t.Errorf("FileCmdLoad = %q", cfg.FileCmdLoad)
+	}
+	wantHistory := filepath.Join(home, "Documents", "todo-tui-history.txt")
+	if cfg.HistoryFile != wantHistory {
+		t.Errorf("HistoryFile = %q, want %q", cfg.HistoryFile, wantHistory)
 	}
 }
 
@@ -725,4 +732,61 @@ func TestSync_PushFailureLeavesBaseUnchanged(t *testing.T) {
 	}
 
 	_ = localDir
+}
+
+func TestDeleteWritesHistory(t *testing.T) {
+	s := newTestState()
+	historyPath := filepath.Join(t.TempDir(), "sub", "history.log")
+	s.cfg.HistoryFile = historyPath
+	s.table.Select(1, 0) // "second"
+
+	s.deleteSelected()
+
+	if len(s.items) != 2 {
+		t.Fatalf("expected 2 items after delete, got %d", len(s.items))
+	}
+	data, err := os.ReadFile(historyPath)
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	line := strings.TrimRight(string(data), "\n")
+	re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2} \d{2}:\d{2} second$`)
+	if !re.MatchString(line) {
+		t.Errorf("history line %q does not match expected format", line)
+	}
+}
+
+func TestDeleteWithoutHistoryFile(t *testing.T) {
+	s := newTestState()
+	s.table.Select(0, 0)
+	s.deleteSelected()
+	if len(s.items) != 2 {
+		t.Errorf("expected 2 items after delete, got %d", len(s.items))
+	}
+}
+
+func TestDeleteAppendsMultipleHistoryLines(t *testing.T) {
+	s := newTestState()
+	historyPath := filepath.Join(t.TempDir(), "history.log")
+	s.cfg.HistoryFile = historyPath
+
+	s.table.Select(0, 0)
+	s.deleteSelected()
+	s.table.Select(0, 0)
+	s.deleteSelected()
+
+	data, err := os.ReadFile(historyPath)
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 history lines, got %d: %q", len(lines), string(data))
+	}
+	if !strings.HasSuffix(lines[0], " first") {
+		t.Errorf("line 0 = %q, want suffix %q", lines[0], " first")
+	}
+	if !strings.HasSuffix(lines[1], " second") {
+		t.Errorf("line 1 = %q, want suffix %q", lines[1], " second")
+	}
 }

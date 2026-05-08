@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var checklistPattern = regexp.MustCompile(`^- \[([ xX])\]\s?(.*?)(?:\s*<!--id:([a-zA-Z0-9_-]+)-->)?\s*$`)
@@ -77,4 +79,18 @@ func saveItems(path string, items []Item) error {
 
 	content := "# TODO\n" + strings.Join(lines, "\n")
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func appendHistory(path, text string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	line := fmt.Sprintf("%s %s\n", time.Now().Format("2006-01-02 15:04"), text)
+	_, err = f.WriteString(line)
+	return err
 }

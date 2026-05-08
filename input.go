@@ -233,10 +233,18 @@ func (s *state) deleteSelected() {
 		return
 	}
 
+	deletedText := s.items[index].text
 	s.items = append(s.items[:index], s.items[index+1:]...)
 	s.lastListSelection = index
 	s.dirty = true
 	s.refreshList()
+
+	if s.cfg.HistoryFile != "" {
+		if err := appendHistory(s.cfg.HistoryFile, deletedText); err != nil {
+			s.updateChrome(fmt.Sprintf("Deleted (history write failed: %v)", err))
+			return
+		}
+	}
 	s.updateChrome("Deleted selected item")
 }
 

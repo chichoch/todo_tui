@@ -14,6 +14,7 @@ type config struct {
 	FilePath    string
 	FileCmdSave string
 	FileCmdLoad string
+	HistoryFile string
 }
 
 func configPath() string {
@@ -66,6 +67,8 @@ func loadConfigFrom(path string) (config, error) {
 			cfg.FileCmdSave = value
 		case "file-cmd-load":
 			cfg.FileCmdLoad = value
+		case "history-file":
+			cfg.HistoryFile = expandHome(value)
 		}
 	}
 
