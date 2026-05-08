@@ -51,6 +51,10 @@ func main() {
 	}
 
 	if items == nil {
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "load: %v\n", err)
+			os.Exit(1)
+		}
 		var err error
 		items, err = loadItems(filePath)
 		if err != nil {

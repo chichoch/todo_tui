@@ -105,6 +105,11 @@ func resolveFilePath(cfg config) string {
 	if cfg.FilePath != "" {
 		return filepath.Join(cfg.FilePath, name)
 	}
+	if cfg.FileCmdSave != "" || cfg.FileCmdLoad != "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".cache", "todo-tui", name)
+		}
+	}
 	return name
 }
 

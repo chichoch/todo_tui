@@ -357,6 +357,12 @@ func (s *state) sync() {
 			return
 		}
 
+		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+			s.items = final
+			s.dirty = true
+			finish(fmt.Sprintf("Sync local write failed: %v", err), true)
+			return
+		}
 		if err := saveItems(filePath, final); err != nil {
 			s.items = final
 			s.dirty = true
