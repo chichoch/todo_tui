@@ -39,6 +39,14 @@ func main() {
 				fmt.Fprintf(os.Stderr, "load: %v\n", err)
 				os.Exit(1)
 			}
+			// Seed the merge base on first run if missing.
+			if base := cachePath(cfg); base != "" {
+				if _, statErr := os.Stat(base); os.IsNotExist(statErr) {
+					if mkErr := ensureCacheDir(cfg); mkErr == nil {
+						_ = saveItems(base, items)
+					}
+				}
+			}
 		}
 	}
 
@@ -83,7 +91,7 @@ func main() {
 		SetBorderColor(tcell.ColorGreen).
 		SetTitle(" Keys ").
 		SetTitleColor(tcell.ColorGreen)
-	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns/w: save\nEsc: cancel\n?/h: this help\n\nq: exit")
+	helpBox.SetText("A: add\ndigits+Enter: jump\nEnter: toggle\nc: edit\nd: delete\ns/w: save/sync\nEsc: cancel\n?/h: this help\n\nq: exit")
 
 	pages := tview.NewPages()
 
@@ -181,10 +189,35 @@ func main() {
 
 	s.savingLabel = savingLabel
 
+	conflictLabel := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft).
+		SetTextColor(tcell.ColorGreen).
+		SetDynamicColors(false)
+	conflictLabel.SetBackgroundColor(tcell.ColorDefault).
+		SetBorder(true).
+		SetBorderColor(tcell.ColorGreen).
+		SetTitle(" Sync Conflict ").
+		SetTitleColor(tcell.ColorGreen)
+
+	conflictOverlay := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			SetDirection(tview.FlexColumn).
+			AddItem(nil, 0, 1, false).
+			AddItem(conflictLabel, 60, 0, true).
+			AddItem(nil, 0, 1, false),
+			10, 0, true).
+		AddItem(nil, 0, 1, false)
+
+	s.conflictLabel = conflictLabel
+	s.conflictOverlay = conflictOverlay
+
 	pages.AddPage("main", mainLayout, true, true)
 	pages.AddPage("help", helpOverlay, true, false)
 	pages.AddPage("quit", quitOverlay, true, false)
 	pages.AddPage("saving", savingOverlay, true, false)
+	pages.AddPage("conflict", conflictOverlay, true, false)
 
 	app.SetInputCapture(s.handleGlobalInput)
 	s.refreshList()

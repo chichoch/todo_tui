@@ -2,17 +2,28 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
 )
 
-var checklistPattern = regexp.MustCompile(`^- \[([ xX])\]\s?(.*)$`)
+var checklistPattern = regexp.MustCompile(`^- \[([ xX])\]\s?(.*?)(?:\s*<!--id:([a-zA-Z0-9_-]+)-->)?\s*$`)
 
 type Item struct {
+	id      string
 	checked bool
 	text    string
+}
+
+func newItemID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%016x", os.Getpid())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func loadItems(path string) ([]Item, error) {
@@ -31,7 +42,13 @@ func loadItems(path string) ([]Item, error) {
 			continue
 		}
 
+		id := match[3]
+		if id == "" {
+			id = newItemID()
+		}
+
 		items = append(items, Item{
+			id:      id,
 			checked: strings.EqualFold(match[1], "x"),
 			text:    match[2],
 		})
@@ -51,7 +68,11 @@ func saveItems(path string, items []Item) error {
 		if item.checked {
 			mark = "x"
 		}
-		lines = append(lines, fmt.Sprintf("- [%s] %s", mark, item.text))
+		id := item.id
+		if id == "" {
+			id = newItemID()
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] %s <!--id:%s-->", mark, item.text, id))
 	}
 
 	content := "# TODO\n" + strings.Join(lines, "\n")

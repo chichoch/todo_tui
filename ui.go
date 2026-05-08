@@ -38,6 +38,14 @@ type state struct {
 
 	savingLabel *tview.TextView
 	saveDone    chan struct{}
+
+	conflictOverlay   *tview.Flex
+	conflictLabel     *tview.TextView
+	resolvingConflict bool
+	pendingConflicts  []conflict
+	pendingIndex      int
+	syncResume        chan resolution
+	syncDone          chan struct{}
 }
 
 func (s *state) refreshList() {
@@ -135,6 +143,68 @@ func (s *state) showSaving(msg string) {
 func (s *state) hideSaving() {
 	s.pages.HidePage("saving")
 	s.app.SetFocus(s.table)
+}
+
+func (s *state) showConflict(index, total int, c conflict) {
+	s.resolvingConflict = true
+	local := "(deleted)"
+	if c.local != nil {
+		mark := " "
+		if c.local.checked {
+			mark = "x"
+		}
+		local = fmt.Sprintf("- [%s] %s", mark, c.local.text)
+	}
+	remote := "(deleted)"
+	if c.remote != nil {
+		mark := " "
+		if c.remote.checked {
+			mark = "x"
+		}
+		remote = fmt.Sprintf("- [%s] %s", mark, c.remote.text)
+	}
+	s.conflictLabel.SetText(fmt.Sprintf(
+		"Conflict %d of %d\n\nLocal : %s\nRemote: %s\n\n(l) keep local   (r) keep remote\n(b) keep both    (Esc) abort sync",
+		index+1, total, local, remote,
+	))
+	s.pages.HidePage("saving")
+	s.pages.ShowPage("conflict")
+	s.app.SetFocus(s.conflictOverlay)
+}
+
+func (s *state) hideConflict() {
+	s.resolvingConflict = false
+	s.pages.HidePage("conflict")
+	s.app.SetFocus(s.table)
+}
+
+func (s *state) handleConflictInput(event *tcell.EventKey) *tcell.EventKey {
+	var kind resolutionKind
+	switch event.Key() {
+	case tcell.KeyEscape:
+		kind = resolutionAbort
+	case tcell.KeyRune:
+		switch event.Rune() {
+		case 'l', 'L':
+			kind = resolutionLocal
+		case 'r', 'R':
+			kind = resolutionRemote
+		case 'b', 'B':
+			kind = resolutionBoth
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
+	if s.pendingIndex >= len(s.pendingConflicts) {
+		return nil
+	}
+	c := s.pendingConflicts[s.pendingIndex]
+	if s.syncResume != nil {
+		s.syncResume <- resolution{id: c.id, kind: kind}
+	}
+	return nil
 }
 
 func (s *state) updateChrome(status string) {

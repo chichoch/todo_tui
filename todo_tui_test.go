@@ -422,3 +422,307 @@ func TestLoadAndSaveItems(t *testing.T) {
 		t.Fatalf("expected 3 items after save, got %d", len(reloaded))
 	}
 }
+
+func TestLoadItems_AssignsMissingID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.md")
+	os.WriteFile(path, []byte("# TODO\n- [ ] no id here\n"), 0o644)
+
+	items, err := loadItems(path)
+	if err != nil {
+		t.Fatalf("loadItems failed: %v", err)
+	}
+	if len(items) != 1 || items[0].id == "" {
+		t.Fatalf("expected legacy item to receive an id, got %+v", items)
+	}
+}
+
+func TestSaveItems_RoundTripsID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.md")
+	original := []Item{{id: "abc1234567890def", text: "one", checked: false}, {id: "feedfacecafebabe", text: "two", checked: true}}
+	if err := saveItems(path, original); err != nil {
+		t.Fatalf("saveItems failed: %v", err)
+	}
+	reloaded, err := loadItems(path)
+	if err != nil {
+		t.Fatalf("loadItems failed: %v", err)
+	}
+	if len(reloaded) != 2 {
+		t.Fatalf("expected 2, got %d", len(reloaded))
+	}
+	for i, it := range reloaded {
+		if it.id != original[i].id || it.text != original[i].text || it.checked != original[i].checked {
+			t.Errorf("round-trip mismatch at %d: got %+v want %+v", i, it, original[i])
+		}
+	}
+}
+
+func TestMerge_LocalOnlyEdit(t *testing.T) {
+	base := []Item{{id: "x", text: "old", checked: false}}
+	local := []Item{{id: "x", text: "new", checked: false}}
+	remote := []Item{{id: "x", text: "old", checked: false}}
+	auto, conflicts := merge(base, local, remote)
+	if len(conflicts) != 0 {
+		t.Fatalf("unexpected conflicts: %+v", conflicts)
+	}
+	if len(auto) != 1 || auto[0].text != "new" {
+		t.Fatalf("expected local edit to win, got %+v", auto)
+	}
+}
+
+func TestMerge_RemoteOnlyEdit(t *testing.T) {
+	base := []Item{{id: "x", text: "old"}}
+	local := []Item{{id: "x", text: "old"}}
+	remote := []Item{{id: "x", text: "new"}}
+	auto, conflicts := merge(base, local, remote)
+	if len(conflicts) != 0 {
+		t.Fatalf("unexpected conflicts: %+v", conflicts)
+	}
+	if len(auto) != 1 || auto[0].text != "new" {
+		t.Fatalf("expected remote edit to win, got %+v", auto)
+	}
+}
+
+func TestMerge_BothEditIdentical(t *testing.T) {
+	base := []Item{{id: "x", text: "old"}}
+	local := []Item{{id: "x", text: "same-new"}}
+	remote := []Item{{id: "x", text: "same-new"}}
+	auto, conflicts := merge(base, local, remote)
+	if len(conflicts) != 0 {
+		t.Fatalf("identical edits should not conflict, got %+v", conflicts)
+	}
+	if len(auto) != 1 || auto[0].text != "same-new" {
+		t.Fatalf("got %+v", auto)
+	}
+}
+
+func TestMerge_BothEditConflict(t *testing.T) {
+	base := []Item{{id: "x", text: "old"}}
+	local := []Item{{id: "x", text: "local-new"}}
+	remote := []Item{{id: "x", text: "remote-new"}}
+	auto, conflicts := merge(base, local, remote)
+	if len(auto) != 0 {
+		t.Fatalf("expected no auto items, got %+v", auto)
+	}
+	if len(conflicts) != 1 || conflicts[0].id != "x" {
+		t.Fatalf("expected one conflict for x, got %+v", conflicts)
+	}
+	if conflicts[0].local == nil || conflicts[0].local.text != "local-new" {
+		t.Errorf("local missing/wrong: %+v", conflicts[0].local)
+	}
+	if conflicts[0].remote == nil || conflicts[0].remote.text != "remote-new" {
+		t.Errorf("remote missing/wrong: %+v", conflicts[0].remote)
+	}
+}
+
+func TestMerge_EditVsDeleteConflict(t *testing.T) {
+	base := []Item{{id: "x", text: "old"}}
+	local := []Item{{id: "x", text: "edited"}}
+	remote := []Item{} // x deleted on remote
+	auto, conflicts := merge(base, local, remote)
+	if len(auto) != 0 {
+		t.Fatalf("expected no auto items, got %+v", auto)
+	}
+	if len(conflicts) != 1 || conflicts[0].remote != nil {
+		t.Fatalf("expected edit-vs-delete with remote=nil, got %+v", conflicts)
+	}
+}
+
+func TestMerge_IndependentAdds(t *testing.T) {
+	base := []Item{}
+	local := []Item{{id: "a", text: "alpha"}}
+	remote := []Item{{id: "b", text: "beta"}}
+	auto, conflicts := merge(base, local, remote)
+	if len(conflicts) != 0 {
+		t.Fatalf("unexpected conflicts: %+v", conflicts)
+	}
+	if len(auto) != 2 {
+		t.Fatalf("expected 2 items, got %+v", auto)
+	}
+	if auto[0].text != "alpha" || auto[1].text != "beta" {
+		t.Errorf("local-first ordering broken: %+v", auto)
+	}
+}
+
+func TestMerge_BothDeleted(t *testing.T) {
+	base := []Item{{id: "x", text: "gone"}}
+	local := []Item{}
+	remote := []Item{}
+	auto, conflicts := merge(base, local, remote)
+	if len(auto) != 0 || len(conflicts) != 0 {
+		t.Fatalf("both-delete should drop, got auto=%+v conflicts=%+v", auto, conflicts)
+	}
+}
+
+func TestApplyResolutions_KeepBothAssignsNewID(t *testing.T) {
+	conflicts := []conflict{{id: "x", local: itemPtr(Item{id: "x", text: "L"}), remote: itemPtr(Item{id: "x", text: "R"})}}
+	resolutions := []resolution{{id: "x", kind: resolutionBoth}}
+	out := applyResolutions(nil, conflicts, resolutions)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 items, got %+v", out)
+	}
+	if out[0].id == out[1].id {
+		t.Errorf("keep-both must produce distinct IDs, got %s == %s", out[0].id, out[1].id)
+	}
+}
+
+// --- sync end-to-end tests ---
+
+func setupSyncFixture(t *testing.T) (s *state, fixtureDir, localDir, homeDir string) {
+	t.Helper()
+	homeDir = t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	fixtureDir = t.TempDir()
+	localDir = t.TempDir()
+
+	s = newTestState()
+	s.items = nil
+	s.cfg.FileName = "SyncTest"
+	s.cfg.FileCmdLoad = "cp " + fixtureDir + "/SyncTest.md $PATH/"
+	s.cfg.FileCmdSave = "cp $PATH/SyncTest.md " + fixtureDir + "/"
+	s.filePath = filepath.Join(localDir, "SyncTest.md")
+	return s, fixtureDir, localDir, homeDir
+}
+
+func waitSync(t *testing.T, s *state) {
+	t.Helper()
+	select {
+	case <-s.syncDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for sync to complete")
+	}
+}
+
+func TestSync_FirstRun_NoBase(t *testing.T) {
+	s, fixtureDir, localDir, _ := setupSyncFixture(t)
+
+	// remote has one item
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "remote1", text: "from-remote"}}); err != nil {
+		t.Fatal(err)
+	}
+	// local in-memory has one item
+	s.items = []Item{{id: "local1", text: "from-local"}}
+
+	s.sync()
+	waitSync(t, s)
+
+	if s.dirty {
+		t.Errorf("expected clean state after successful sync")
+	}
+	if len(s.items) != 2 {
+		t.Fatalf("expected merged 2 items, got %+v", s.items)
+	}
+
+	// local file written with merged
+	saved, err := loadItems(filepath.Join(localDir, "SyncTest.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved) != 2 {
+		t.Errorf("local file should have 2 items, got %d", len(saved))
+	}
+
+	// remote file written with merged (push round-trip)
+	pushed, err := loadItems(filepath.Join(fixtureDir, "SyncTest.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pushed) != 2 {
+		t.Errorf("remote file should have 2 items, got %d", len(pushed))
+	}
+
+	// base file written
+	baseFile := cachePath(s.cfg)
+	base, err := loadItems(baseFile)
+	if err != nil {
+		t.Fatalf("base file missing or unreadable: %v", err)
+	}
+	if len(base) != 2 {
+		t.Errorf("base file should have 2 items, got %d", len(base))
+	}
+}
+
+func TestSync_PushSuccessUpdatesBase(t *testing.T) {
+	s, fixtureDir, _, _ := setupSyncFixture(t)
+
+	// Pre-seed base with one item, matching local (no local edits)
+	if err := ensureCacheDir(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	seed := []Item{{id: "x", text: "shared"}}
+	if err := saveItems(cachePath(s.cfg), seed); err != nil {
+		t.Fatal(err)
+	}
+	s.items = []Item{{id: "x", text: "shared"}}
+
+	// Remote added a new item
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "x", text: "shared"}, {id: "y", text: "added-on-remote"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.sync()
+	waitSync(t, s)
+
+	if s.dirty {
+		t.Errorf("expected clean state after sync")
+	}
+
+	base, err := loadItems(cachePath(s.cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base) != 2 {
+		t.Errorf("base should have 2 items after sync, got %d", len(base))
+	}
+}
+
+func TestSync_PushFailureLeavesBaseUnchanged(t *testing.T) {
+	s, fixtureDir, localDir, _ := setupSyncFixture(t)
+
+	if err := ensureCacheDir(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	seed := []Item{{id: "x", text: "before"}}
+	if err := saveItems(cachePath(s.cfg), seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveItems(s.filePath, seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), seed); err != nil {
+		t.Fatal(err)
+	}
+	s.items = []Item{{id: "x", text: "before"}, {id: "y", text: "local-add"}}
+
+	// Force the push to fail.
+	s.cfg.FileCmdSave = "false"
+
+	s.sync()
+	waitSync(t, s)
+
+	if !s.dirty {
+		t.Errorf("expected dirty state after failed push")
+	}
+
+	// Base file must still match the seed.
+	base, err := loadItems(cachePath(s.cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base) != 1 || base[0].text != "before" {
+		t.Errorf("base file should be unchanged after failed push, got %+v", base)
+	}
+
+	// Local file must also be unchanged.
+	local, err := loadItems(s.filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(local) != 1 || local[0].text != "before" {
+		t.Errorf("local file should be unchanged after failed push, got %+v", local)
+	}
+
+	_ = localDir
+}

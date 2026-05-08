@@ -122,3 +122,19 @@ func configFileName(cfg config) string {
 	}
 	return "TODO_tui"
 }
+
+func cachePath(cfg config) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".cache", "todo-tui", configFileName(cfg)+".base.md")
+}
+
+func ensureCacheDir(cfg config) error {
+	p := cachePath(cfg)
+	if p == "" {
+		return fmt.Errorf("could not resolve cache dir")
+	}
+	return os.MkdirAll(filepath.Dir(p), 0o755)
+}

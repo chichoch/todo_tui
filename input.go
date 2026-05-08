@@ -11,6 +11,9 @@ import (
 )
 
 func (s *state) handleGlobalInput(event *tcell.EventKey) *tcell.EventKey {
+	if s.resolvingConflict {
+		return s.handleConflictInput(event)
+	}
 	if s.confirmQuit {
 		return s.handleQuitInput(event)
 	}
@@ -72,7 +75,11 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 			s.deleteSelected()
 			return nil
 		case 's', 'w':
-			s.save()
+			if s.cfg.FileCmdSave != "" {
+				s.sync()
+			} else {
+				s.save()
+			}
 			return nil
 		}
 	case tcell.KeyEnter:
@@ -231,6 +238,134 @@ func (s *state) deleteSelected() {
 	s.dirty = true
 	s.refreshList()
 	s.updateChrome("Deleted selected item")
+}
+
+func (s *state) sync() {
+	s.showSaving("Syncing...")
+
+	itemsCopy := make([]Item, len(s.items))
+	copy(itemsCopy, s.items)
+
+	syncDone := make(chan struct{})
+	s.syncDone = syncDone
+	s.syncResume = make(chan resolution, 1)
+
+	cfg := s.cfg
+	filePath := s.filePath
+
+	go func() {
+		// Close syncDone BEFORE any QueueUpdateDraw, since QueueUpdateDraw
+		// blocks until the app event loop drains it (and tests don't run one).
+		finish := func(status string, refreshUI bool) {
+			close(syncDone)
+			s.app.QueueUpdateDraw(func() {
+				if refreshUI {
+					s.refreshList()
+				}
+				s.hideConflict()
+				s.hideSaving()
+				s.updateChrome(status)
+			})
+		}
+
+		pullDir, err := os.MkdirTemp("", "todo_tui_sync_pull_")
+		if err != nil {
+			finish(fmt.Sprintf("Sync failed: %v", err), false)
+			return
+		}
+		defer os.RemoveAll(pullDir)
+
+		if err := runFileCmd(cfg.FileCmdLoad, pullDir, configFileName(cfg)); err != nil {
+			finish(fmt.Sprintf("Sync pull failed: %v", err), false)
+			return
+		}
+
+		remote, err := loadItems(filepath.Join(pullDir, resolveFileName(cfg)))
+		if err != nil {
+			finish(fmt.Sprintf("Sync pull parse failed: %v", err), false)
+			return
+		}
+
+		var base []Item
+		basePath := cachePath(cfg)
+		if basePath != "" {
+			if _, statErr := os.Stat(basePath); statErr == nil {
+				if b, err := loadItems(basePath); err == nil {
+					base = b
+				}
+			}
+		}
+
+		auto, conflicts := merge(base, itemsCopy, remote)
+
+		var resolutions []resolution
+		if len(conflicts) > 0 {
+			conflictsLocal := conflicts
+			for i := range conflictsLocal {
+				idx := i
+				s.app.QueueUpdateDraw(func() {
+					s.pendingConflicts = conflictsLocal
+					s.pendingIndex = idx
+					s.showConflict(idx, len(conflictsLocal), conflictsLocal[idx])
+				})
+				res := <-s.syncResume
+				if res.kind == resolutionAbort {
+					finish("Sync aborted", false)
+					return
+				}
+				resolutions = append(resolutions, res)
+			}
+			s.app.QueueUpdateDraw(func() {
+				s.pendingConflicts = nil
+				s.pendingIndex = 0
+				s.hideConflict()
+				s.showSaving("Syncing...")
+			})
+		}
+
+		final := applyResolutions(auto, conflicts, resolutions)
+
+		pushDir, err := os.MkdirTemp("", "todo_tui_sync_push_")
+		if err != nil {
+			s.items = final
+			s.dirty = true
+			finish(fmt.Sprintf("Sync failed: %v", err), true)
+			return
+		}
+		defer os.RemoveAll(pushDir)
+
+		pushFile := filepath.Join(pushDir, resolveFileName(cfg))
+		if err := saveItems(pushFile, final); err != nil {
+			s.items = final
+			s.dirty = true
+			finish(fmt.Sprintf("Sync write failed: %v", err), true)
+			return
+		}
+
+		if err := runFileCmd(cfg.FileCmdSave, pushDir, configFileName(cfg)); err != nil {
+			s.items = final
+			s.dirty = true
+			finish(fmt.Sprintf("Sync push failed: %v", err), true)
+			return
+		}
+
+		if err := saveItems(filePath, final); err != nil {
+			s.items = final
+			s.dirty = true
+			finish(fmt.Sprintf("Sync local write failed: %v", err), true)
+			return
+		}
+
+		if basePath != "" {
+			if err := ensureCacheDir(cfg); err == nil {
+				_ = saveItems(basePath, final)
+			}
+		}
+
+		s.items = final
+		s.dirty = false
+		finish(fmt.Sprintf("Synced (%d conflicts)", len(conflicts)), true)
+	}()
 }
 
 func (s *state) save() {
