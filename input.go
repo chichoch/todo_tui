@@ -33,7 +33,7 @@ func (s *state) handleGlobalInput(event *tcell.EventKey) *tcell.EventKey {
 	if s.input.HasFocus() {
 		return event
 	}
-	if event.Key() == tcell.KeyRune && event.Rune() == 'A' {
+	if event.Key() == tcell.KeyRune && (event.Rune() == 'A' || event.Rune() == 'a') {
 		s.startAddMode()
 		return nil
 	}
