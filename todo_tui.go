@@ -19,6 +19,9 @@ func parseCLIArgs(args []string) (file string, noHistory bool, err error) {
 	if err := fs.Parse(args); err != nil {
 		return "", false, err
 	}
+	if fs.NArg() > 1 {
+		return "", false, fmt.Errorf("unexpected extra arguments: %v", fs.Args()[1:])
+	}
 	return fs.Arg(0), noHistory, nil
 }
 

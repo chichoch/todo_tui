@@ -193,8 +193,8 @@ func TestLoadConfig(t *testing.T) {
 	os.WriteFile(confPath, []byte(`# comment
 $FILE = MyTodo
 file-path = ~/Documents/
-file-cmd-save = rclone copy $PATH gdrive:docs/$FILE
-file-cmd-load = rclone copy gdrive:docs/$FILE $PATH
+file-cmd-save = rclone copy "$TODO_PATH/$TODO_FILE.md" gdrive:docs/
+file-cmd-load = rclone copy "gdrive:docs/$TODO_FILE.md" "$TODO_PATH/"
 history-file = ~/Documents/todo-tui-history.txt
 `), 0o644)
 
@@ -215,10 +215,10 @@ history-file = ~/Documents/todo-tui-history.txt
 	if got := resolveFilePath(cfg); got != wantResolved {
 		t.Errorf("resolveFilePath = %q, want %q", got, wantResolved)
 	}
-	if cfg.FileCmdSave != "rclone copy $PATH gdrive:docs/$FILE" {
+	if cfg.FileCmdSave != `rclone copy "$TODO_PATH/$TODO_FILE.md" gdrive:docs/` {
 		t.Errorf("FileCmdSave = %q", cfg.FileCmdSave)
 	}
-	if cfg.FileCmdLoad != "rclone copy gdrive:docs/$FILE $PATH" {
+	if cfg.FileCmdLoad != `rclone copy "gdrive:docs/$TODO_FILE.md" "$TODO_PATH/"` {
 		t.Errorf("FileCmdLoad = %q", cfg.FileCmdLoad)
 	}
 	wantHistory := filepath.Join(home, "Documents", "todo-tui-history.txt")
@@ -266,8 +266,7 @@ func TestSaveWithFileCmdSave(t *testing.T) {
 
 	s := newTestState()
 	s.cfg.FileName = "Test"
-	// cp copies files from $PATH dir to dest; $FILE is the raw config name.
-	s.cfg.FileCmdSave = "cp $PATH/Test.md " + destDir + "/"
+	s.cfg.FileCmdSave = `cp "$TODO_PATH/$TODO_FILE.md" ` + destDir + "/"
 
 	s.save()
 
@@ -587,8 +586,8 @@ func setupSyncFixture(t *testing.T) (s *state, fixtureDir, localDir, homeDir str
 	s = newTestState()
 	s.items = nil
 	s.cfg.FileName = "SyncTest"
-	s.cfg.FileCmdLoad = "cp " + fixtureDir + "/SyncTest.md $PATH/"
-	s.cfg.FileCmdSave = "cp $PATH/SyncTest.md " + fixtureDir + "/"
+	s.cfg.FileCmdLoad = "cp " + fixtureDir + `/SyncTest.md "$TODO_PATH/"`
+	s.cfg.FileCmdSave = `cp "$TODO_PATH/$TODO_FILE.md" ` + fixtureDir + "/"
 	s.filePath = filepath.Join(localDir, "SyncTest.md")
 	return s, fixtureDir, localDir, homeDir
 }
@@ -923,7 +922,7 @@ func TestSave_AfterOverride_WritesLocalNotRemote(t *testing.T) {
 	s := newTestState()
 	// Pre-override: remote cmd is set (would normally route through async branch).
 	s.cfg.FileName = "Test"
-	s.cfg.FileCmdSave = "cp $PATH/Test.md " + destDir + "/"
+	s.cfg.FileCmdSave = `cp "$TODO_PATH/$TODO_FILE.md" ` + destDir + "/"
 
 	argFile := filepath.Join(dir, "override.md")
 	newCfg, newPath := applyCLIOverrides(s.cfg, argFile, false)
@@ -990,5 +989,156 @@ func TestDeleteAppendsMultipleHistoryLines(t *testing.T) {
 	}
 	if !strings.HasSuffix(lines[1], " second") {
 		t.Errorf("line 1 = %q, want suffix %q", lines[1], " second")
+	}
+}
+
+// --- review-follow-up coverage ---
+
+func TestSync_KeepBothResolution(t *testing.T) {
+	s, fixtureDir, _, _ := setupSyncFixture(t)
+
+	if err := ensureCacheDir(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	base := []Item{{id: "x", text: "shared"}}
+	if err := saveItems(cachePath(s.cfg), base); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "x", text: "remote-edit"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.items = []Item{{id: "x", text: "local-edit"}}
+
+	s.sync()
+	s.syncResume <- resolution{id: "x", kind: resolutionBoth}
+	waitSync(t, s)
+
+	if len(s.items) != 2 {
+		t.Fatalf("keep-both should yield 2 items, got %+v", s.items)
+	}
+	texts := map[string]bool{s.items[0].text: true, s.items[1].text: true}
+	if !texts["local-edit"] || !texts["remote-edit"] {
+		t.Errorf("expected both local-edit and remote-edit, got %+v", s.items)
+	}
+	if s.items[0].id == s.items[1].id {
+		t.Errorf("keep-both must yield distinct ids, both = %q", s.items[0].id)
+	}
+}
+
+func TestSync_AbortDuringConflict(t *testing.T) {
+	s, fixtureDir, _, _ := setupSyncFixture(t)
+
+	if err := ensureCacheDir(s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	base := []Item{{id: "x", text: "shared"}}
+	if err := saveItems(cachePath(s.cfg), base); err != nil {
+		t.Fatal(err)
+	}
+	remoteFile := filepath.Join(fixtureDir, "SyncTest.md")
+	if err := saveItems(remoteFile, []Item{{id: "x", text: "remote-edit"}}); err != nil {
+		t.Fatal(err)
+	}
+	remoteStat, _ := os.Stat(remoteFile)
+	s.items = []Item{{id: "x", text: "local-edit"}}
+
+	s.sync()
+	s.syncResume <- resolution{id: "x", kind: resolutionAbort}
+	waitSync(t, s)
+
+	// Local in-memory items unchanged.
+	if len(s.items) != 1 || s.items[0].text != "local-edit" {
+		t.Errorf("abort should leave local items untouched, got %+v", s.items)
+	}
+	// Remote file unchanged.
+	postStat, _ := os.Stat(remoteFile)
+	if postStat.ModTime() != remoteStat.ModTime() {
+		t.Error("remote file should not be touched after abort")
+	}
+	// Base unchanged.
+	gotBase, _ := loadItems(cachePath(s.cfg))
+	if len(gotBase) != 1 || gotBase[0].text != "shared" {
+		t.Errorf("base should be untouched after abort, got %+v", gotBase)
+	}
+}
+
+func TestSync_MalformedRemote(t *testing.T) {
+	s, fixtureDir, _, _ := setupSyncFixture(t)
+
+	if err := os.WriteFile(filepath.Join(fixtureDir, "SyncTest.md"), []byte("not a checklist\njust prose\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.items = []Item{{id: "local", text: "kept"}}
+
+	s.sync()
+	waitSync(t, s)
+
+	if len(s.items) != 1 || s.items[0].text != "kept" {
+		t.Errorf("malformed remote should leave local items intact, got %+v", s.items)
+	}
+	if s.dirty {
+		t.Error("expected clean state after successful sync over malformed remote")
+	}
+}
+
+func TestAppendHistory_PermissionDenied(t *testing.T) {
+	s := newTestState()
+	// /dev/null is not a directory, so MkdirAll on a subpath fails fast.
+	s.cfg.HistoryFile = "/dev/null/nope/history.log"
+	s.table.Select(1, 0)
+
+	s.deleteSelected()
+
+	if len(s.items) != 2 {
+		t.Errorf("item should still be removed despite history failure, got %d items", len(s.items))
+	}
+	if !strings.Contains(s.status, "history write failed") {
+		t.Errorf("expected status to surface history failure, got %q", s.status)
+	}
+}
+
+func TestRunFileCmd_EnvVars(t *testing.T) {
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "out")
+	// Use single quotes around output filename to avoid shell expansion in the path itself.
+	cmd := "printf '%s|%s' \"$TODO_PATH\" \"$TODO_FILE\" > " + outFile
+	if err := runFileCmd(cmd, "/some/dir", "MyTodo"); err != nil {
+		t.Fatalf("runFileCmd failed: %v", err)
+	}
+	got, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/some/dir|MyTodo"
+	if string(got) != want {
+		t.Errorf("env passthrough = %q, want %q", string(got), want)
+	}
+}
+
+func TestLoadConfig_RejectsBadFile(t *testing.T) {
+	cases := []string{
+		"../../etc/passwd",
+		"foo/bar",
+		"bad;name",
+		"a&b",
+		"x`whoami`",
+	}
+	for _, name := range cases {
+		dir := t.TempDir()
+		confPath := filepath.Join(dir, "todo-tui.conf")
+		os.WriteFile(confPath, []byte("$FILE = "+name+"\n"), 0o644)
+		if _, err := loadConfigFrom(confPath); err == nil {
+			t.Errorf("expected error for $FILE = %q, got nil", name)
+		}
+	}
+}
+
+func TestParseCLI_RejectsExtraArgs(t *testing.T) {
+	_, _, err := parseCLIArgs([]string{"a.md", "b.md"})
+	if err == nil {
+		t.Fatal("expected error when multiple positional args are passed")
+	}
+	if !strings.Contains(err.Error(), "unexpected") {
+		t.Errorf("error = %q, want contains 'unexpected'", err.Error())
 	}
 }

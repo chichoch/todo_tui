@@ -32,7 +32,12 @@ from the config are ignored. History is still recorded (if configured) unless
 TODO-tui supports config files in this location: `~/.config/todo-tui/todo-tui.conf`.
 The `install.sh`-file creates it by default.
 
-- Adds support for remote files (With sync functionality)
+- Adds support for remote files (with sync functionality). Set `file-cmd-save` / `file-cmd-load` in the config; the commands are run via `sh -c` with `$TODO_PATH` (temp dir holding the file) and `$TODO_FILE` (base name without `.md`) exported. Example:
+
+  ```
+  file-cmd-save = rclone copy "$TODO_PATH/$TODO_FILE.md" gdrive:docs/
+  file-cmd-load = rclone copy "gdrive:docs/$TODO_FILE.md" "$TODO_PATH/"
+  ```
 - History-file support. (Saves the removed items to a local history file optionally specified in the config file.)
 - Change filename.
 

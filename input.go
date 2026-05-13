@@ -18,7 +18,7 @@ func (s *state) handleGlobalInput(event *tcell.EventKey) *tcell.EventKey {
 		return s.handleQuitInput(event)
 	}
 	if event.Key() == tcell.KeyCtrlC {
-		if s.dirty {
+		if s.isDirty() {
 			s.showQuitDialog()
 			return nil
 		}
@@ -58,7 +58,7 @@ func (s *state) handleListInput(event *tcell.EventKey) *tcell.EventKey {
 			s.toggleSelected()
 			return nil
 		case 'q':
-			if s.dirty {
+			if s.isDirty() {
 				s.showQuitDialog()
 				return nil
 			}
@@ -132,7 +132,13 @@ func (s *state) startEditMode() {
 	s.mode = inputModeEdit
 	s.editIndex = index
 	s.input.SetLabel(fmt.Sprintf("Edit #%d: ", index+1))
-	s.input.SetText(s.items[index].text)
+	s.mu.Lock()
+	text := ""
+	if index < len(s.items) {
+		text = s.items[index].text
+	}
+	s.mu.Unlock()
+	s.input.SetText(text)
 	s.clearJumpBuffer()
 	s.app.SetFocus(s.input)
 	s.updateChrome(fmt.Sprintf("Editing item %d", index+1))
@@ -153,6 +159,7 @@ func (s *state) commitInput() {
 
 	status := ""
 
+	s.mu.Lock()
 	switch s.mode {
 	case inputModeEdit:
 		if s.editIndex >= 0 && s.editIndex < len(s.items) {
@@ -167,6 +174,7 @@ func (s *state) commitInput() {
 		s.dirty = true
 		status = fmt.Sprintf("Added item %d", len(s.items))
 	}
+	s.mu.Unlock()
 
 	s.refreshList()
 	if status == "" {
@@ -196,12 +204,15 @@ func (s *state) cancelInput() {
 }
 
 func (s *state) selectedIndex() int {
-	if len(s.items) == 0 {
+	s.mu.Lock()
+	n := len(s.items)
+	s.mu.Unlock()
+	if n == 0 {
 		return -1
 	}
 
 	row, _ := s.table.GetSelection()
-	if row < 0 || row >= len(s.items) {
+	if row < 0 || row >= n {
 		return -1
 	}
 
@@ -216,10 +227,14 @@ func (s *state) toggleSelected() {
 		return
 	}
 
+	s.mu.Lock()
 	s.items[index].checked = !s.items[index].checked
+	checked := s.items[index].checked
 	s.dirty = true
+	s.mu.Unlock()
+
 	s.refreshList()
-	if s.items[index].checked {
+	if checked {
 		s.updateChrome(fmt.Sprintf("Checked item %d", index+1))
 	} else {
 		s.updateChrome(fmt.Sprintf("Unchecked item %d", index+1))
@@ -233,10 +248,12 @@ func (s *state) deleteSelected() {
 		return
 	}
 
+	s.mu.Lock()
 	deletedText := s.items[index].text
 	s.items = append(s.items[:index], s.items[index+1:]...)
-	s.lastListSelection = index
 	s.dirty = true
+	s.mu.Unlock()
+	s.lastListSelection = index
 	s.refreshList()
 
 	if s.cfg.HistoryFile != "" {
@@ -251,8 +268,10 @@ func (s *state) deleteSelected() {
 func (s *state) sync() {
 	s.showSaving("Syncing...")
 
+	s.mu.Lock()
 	itemsCopy := make([]Item, len(s.items))
 	copy(itemsCopy, s.items)
+	s.mu.Unlock()
 
 	syncDone := make(chan struct{})
 	s.syncDone = syncDone
@@ -311,7 +330,10 @@ func (s *state) sync() {
 			conflictsLocal := conflicts
 			for i := range conflictsLocal {
 				idx := i
-				s.app.QueueUpdateDraw(func() {
+				// QueueUpdateDraw waits on the event loop, which tests don't run;
+				// dispatch the UI update from a helper goroutine so the sync
+				// goroutine can immediately block on syncResume.
+				go s.app.QueueUpdateDraw(func() {
 					s.pendingConflicts = conflictsLocal
 					s.pendingIndex = idx
 					s.showConflict(idx, len(conflictsLocal), conflictsLocal[idx])
@@ -323,7 +345,7 @@ func (s *state) sync() {
 				}
 				resolutions = append(resolutions, res)
 			}
-			s.app.QueueUpdateDraw(func() {
+			go s.app.QueueUpdateDraw(func() {
 				s.pendingConflicts = nil
 				s.pendingIndex = 0
 				s.hideConflict()
@@ -335,8 +357,10 @@ func (s *state) sync() {
 
 		pushDir, err := os.MkdirTemp("", "todo_tui_sync_push_")
 		if err != nil {
+			s.mu.Lock()
 			s.items = final
 			s.dirty = true
+			s.mu.Unlock()
 			finish(fmt.Sprintf("Sync failed: %v", err), true)
 			return
 		}
@@ -344,28 +368,36 @@ func (s *state) sync() {
 
 		pushFile := filepath.Join(pushDir, resolveFileName(cfg))
 		if err := saveItems(pushFile, final); err != nil {
+			s.mu.Lock()
 			s.items = final
 			s.dirty = true
+			s.mu.Unlock()
 			finish(fmt.Sprintf("Sync write failed: %v", err), true)
 			return
 		}
 
 		if err := runFileCmd(cfg.FileCmdSave, pushDir, configFileName(cfg)); err != nil {
+			s.mu.Lock()
 			s.items = final
 			s.dirty = true
+			s.mu.Unlock()
 			finish(fmt.Sprintf("Sync push failed: %v", err), true)
 			return
 		}
 
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+			s.mu.Lock()
 			s.items = final
 			s.dirty = true
+			s.mu.Unlock()
 			finish(fmt.Sprintf("Sync local write failed: %v", err), true)
 			return
 		}
 		if err := saveItems(filePath, final); err != nil {
+			s.mu.Lock()
 			s.items = final
 			s.dirty = true
+			s.mu.Unlock()
 			finish(fmt.Sprintf("Sync local write failed: %v", err), true)
 			return
 		}
@@ -376,8 +408,10 @@ func (s *state) sync() {
 			}
 		}
 
+		s.mu.Lock()
 		s.items = final
 		s.dirty = false
+		s.mu.Unlock()
 		finish(fmt.Sprintf("Synced (%d conflicts)", len(conflicts)), true)
 	}()
 }
@@ -385,8 +419,10 @@ func (s *state) sync() {
 func (s *state) save() {
 	if s.cfg.FileCmdSave != "" {
 		s.showSaving("Saving...")
+		s.mu.Lock()
 		itemsCopy := make([]Item, len(s.items))
 		copy(itemsCopy, s.items)
+		s.mu.Unlock()
 		done := make(chan struct{})
 		s.saveDone = done
 
@@ -421,7 +457,9 @@ func (s *state) save() {
 
 			if ok {
 				status = "Saved via command"
+				s.mu.Lock()
 				s.dirty = false
+				s.mu.Unlock()
 			}
 
 			close(done)
@@ -433,11 +471,17 @@ func (s *state) save() {
 		return
 	}
 
-	if err := saveItems(s.filePath, s.items); err != nil {
+	s.mu.Lock()
+	itemsCopy := make([]Item, len(s.items))
+	copy(itemsCopy, s.items)
+	s.mu.Unlock()
+	if err := saveItems(s.filePath, itemsCopy); err != nil {
 		s.updateChrome(fmt.Sprintf("Save failed: %v", err))
 		return
 	}
+	s.mu.Lock()
 	s.dirty = false
+	s.mu.Unlock()
 	s.updateChrome("Saved " + s.filePath)
 }
 
@@ -477,8 +521,11 @@ func (s *state) commitJump() {
 	raw := s.jumpBuffer
 	s.clearJumpBuffer()
 
+	s.mu.Lock()
+	n := len(s.items)
+	s.mu.Unlock()
 	index, err := strconv.Atoi(raw)
-	if err != nil || index < 1 || index > len(s.items) {
+	if err != nil || index < 1 || index > n {
 		s.updateChrome(fmt.Sprintf("Invalid item number: %s", raw))
 		return
 	}

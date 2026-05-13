@@ -60,6 +60,9 @@ func loadConfigFrom(path string) (config, error) {
 
 		switch key {
 		case "$FILE":
+			if err := validateFileName(value); err != nil {
+				return cfg, fmt.Errorf("$FILE %q: %w", value, err)
+			}
 			cfg.FileName = value
 		case "file-path":
 			cfg.FilePath = expandHome(value)
@@ -81,6 +84,20 @@ func loadConfigFrom(path string) (config, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateFileName(name string) error {
+	if name == "" {
+		return fmt.Errorf("empty name")
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("must not contain '..'")
+	}
+	const bad = "/\\;&|`$()<>\"'*?\n\r\t"
+	if strings.ContainsAny(name, bad) {
+		return fmt.Errorf("contains forbidden character")
+	}
+	return nil
 }
 
 func expandHome(path string) string {
@@ -114,12 +131,14 @@ func resolveFilePath(cfg config) string {
 }
 
 func runFileCmd(cmdTemplate, dir, fileName string) error {
-	expanded := strings.ReplaceAll(cmdTemplate, "$PATH", dir)
-	expanded = strings.ReplaceAll(expanded, "$FILE", fileName)
-	cmd := exec.Command("sh", "-c", expanded)
+	cmd := exec.Command("sh", "-c", cmdTemplate)
+	cmd.Env = append(os.Environ(),
+		"TODO_PATH="+dir,
+		"TODO_FILE="+fileName,
+	)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("command %q failed: %w", expanded, err)
+		return fmt.Errorf("command %q failed: %w", cmdTemplate, err)
 	}
 	return nil
 }

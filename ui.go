@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -21,14 +22,17 @@ type state struct {
 	input      *tview.InputField
 	statusBar  *tview.TextView
 	helpBox    *tview.TextView
-	items       []Item
-	filePath    string
-	cfg         config
+	items      []Item
+	filePath   string
+	cfg        config
 	dirty      bool
 	mode       inputMode
 	editIndex  int
 	jumpBuffer string
 	status     string
+
+	// mu guards items and dirty across the sync/save background goroutines.
+	mu sync.Mutex
 
 	lastListSelection int
 	helpVisible       bool
@@ -48,15 +52,26 @@ type state struct {
 	syncDone          chan struct{}
 }
 
+func (s *state) isDirty() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dirty
+}
+
 func (s *state) refreshList() {
+	s.mu.Lock()
+	items := make([]Item, len(s.items))
+	copy(items, s.items)
+	s.mu.Unlock()
+
 	s.table.Clear()
 
-	if len(s.items) == 0 {
+	if len(items) == 0 {
 		s.table.SetCell(0, 0, tview.NewTableCell("No TODO items yet. Press A to add one.").SetSelectable(false))
 		return
 	}
 
-	for i, item := range s.items {
+	for i, item := range items {
 		color := tcell.ColorWhite
 		if item.checked {
 			color = tcell.ColorGreen
@@ -79,8 +94,8 @@ func (s *state) refreshList() {
 		s.table.SetCell(i, 1, textCell)
 	}
 
-	if s.lastListSelection >= len(s.items) {
-		s.lastListSelection = len(s.items) - 1
+	if s.lastListSelection >= len(items) {
+		s.lastListSelection = len(items) - 1
 	}
 	if s.lastListSelection < 0 {
 		s.lastListSelection = 0
@@ -219,8 +234,11 @@ func (s *state) updateChrome(status string) {
 		}
 	}
 
+	s.mu.Lock()
+	isDirty := s.dirty
+	s.mu.Unlock()
 	dirty := "clean"
-	if s.dirty {
+	if isDirty {
 		dirty = "unsaved"
 	}
 
