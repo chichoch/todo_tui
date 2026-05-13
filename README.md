@@ -10,6 +10,21 @@ TODO-tui uses `TODO-tui.md` files in the current folder for saving the lists.
 3. `go build .`
 4. run `-/install.sh` (Will install it in `~/.local/bin/`)
 
+## Usage
+
+```sh
+todo-tui                        # use the config-driven file (default)
+todo-tui notes.md               # edit a specific file (ignores file-cmd-save / file-cmd-load)
+todo-tui ~/notes/grocery.md     # `~/` is expanded
+todo-tui -n                     # disable history-file appends for this session
+todo-tui --no-history notes.md  # combine: ad-hoc file + no history
+```
+
+Flags must come before the positional file argument. Passing a file argument
+forces a plain local edit on that file — `file-cmd-save` and `file-cmd-load`
+from the config are ignored. History is still recorded (if configured) unless
+`-n` / `--no-history` is also passed.
+
 ## Features
 
 #### Config file
@@ -25,7 +40,6 @@ The `install.sh`-file creates it by default.
 
 This is a app in a very early state. 
 Ideas for future functionality:
-- Provide md-file as a flag? 
 - Sorting
 - Levels (tabs)
 - Group by day

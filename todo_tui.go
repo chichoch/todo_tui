@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -9,14 +11,49 @@ import (
 	"github.com/rivo/tview"
 )
 
+func parseCLIArgs(args []string) (file string, noHistory bool, err error) {
+	fs := flag.NewFlagSet("todo-tui", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.BoolVar(&noHistory, "no-history", false, "skip appending deletions to history file")
+	fs.BoolVar(&noHistory, "n", false, "skip appending deletions to history file (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return "", false, err
+	}
+	return fs.Arg(0), noHistory, nil
+}
+
+func applyCLIOverrides(cfg config, argFile string, noHistory bool) (config, string) {
+	var filePath string
+	if argFile != "" {
+		cfg.FilePath = ""
+		cfg.FileName = ""
+		cfg.FileCmdSave = ""
+		cfg.FileCmdLoad = ""
+		filePath = expandHome(argFile)
+	}
+	if noHistory {
+		cfg.HistoryFile = ""
+	}
+	return cfg, filePath
+}
+
 func main() {
+	argFile, noHistory, err := parseCLIArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "args: %v\n", err)
+		os.Exit(2)
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
 
-	filePath := resolveFilePath(cfg)
+	cfg, filePath := applyCLIOverrides(cfg, argFile, noHistory)
+	if filePath == "" {
+		filePath = resolveFilePath(cfg)
+	}
 
 	// If a load command is configured, fetch the file to a temp directory.
 	var loadStatus string

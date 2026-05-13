@@ -765,6 +765,208 @@ func TestDeleteWithoutHistoryFile(t *testing.T) {
 	}
 }
 
+// --- CLI argument parsing ---
+
+func TestParseCLI_Empty(t *testing.T) {
+	file, noHistory, err := parseCLIArgs(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if file != "" || noHistory {
+		t.Errorf("expected zero values, got file=%q noHistory=%v", file, noHistory)
+	}
+}
+
+func TestParseCLI_PositionalOnly(t *testing.T) {
+	file, noHistory, err := parseCLIArgs([]string{"notes.md"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if file != "notes.md" {
+		t.Errorf("file = %q, want %q", file, "notes.md")
+	}
+	if noHistory {
+		t.Errorf("noHistory = true, want false")
+	}
+}
+
+func TestParseCLI_NoHistoryShort(t *testing.T) {
+	file, noHistory, err := parseCLIArgs([]string{"-n"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !noHistory {
+		t.Errorf("noHistory = false, want true")
+	}
+	if file != "" {
+		t.Errorf("file = %q, want empty", file)
+	}
+}
+
+func TestParseCLI_NoHistoryLong(t *testing.T) {
+	file, noHistory, err := parseCLIArgs([]string{"--no-history"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !noHistory {
+		t.Errorf("noHistory = false, want true")
+	}
+	if file != "" {
+		t.Errorf("file = %q, want empty", file)
+	}
+}
+
+func TestParseCLI_FlagThenPositional(t *testing.T) {
+	file, noHistory, err := parseCLIArgs([]string{"-n", "notes.md"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !noHistory {
+		t.Errorf("noHistory = false, want true")
+	}
+	if file != "notes.md" {
+		t.Errorf("file = %q, want %q", file, "notes.md")
+	}
+}
+
+// --- CLI override application ---
+
+func TestApplyOverrides_NoArgs_PreservesConfig(t *testing.T) {
+	cfg := config{
+		FilePath:    "/etc/todo",
+		FileCmdSave: "cp $PATH /tmp/",
+		FileCmdLoad: "cp /tmp/ $PATH",
+		HistoryFile: "/var/log/todo-history",
+	}
+	got, path := applyCLIOverrides(cfg, "", false)
+	if got != cfg {
+		t.Errorf("cfg modified unexpectedly: got %+v, want %+v", got, cfg)
+	}
+	if path != "" {
+		t.Errorf("path = %q, want empty (caller should fall back)", path)
+	}
+}
+
+func TestApplyOverrides_FileArgClearsRemoteAndPath(t *testing.T) {
+	cfg := config{
+		FileName:    "Foo",
+		FilePath:    "/etc/todo",
+		FileCmdSave: "cp $PATH /tmp/",
+		FileCmdLoad: "cp /tmp/ $PATH",
+	}
+	got, path := applyCLIOverrides(cfg, "/tmp/foo.md", false)
+	if got.FilePath != "" || got.FileName != "" || got.FileCmdSave != "" || got.FileCmdLoad != "" {
+		t.Errorf("expected remote/path fields cleared, got %+v", got)
+	}
+	if path != "/tmp/foo.md" {
+		t.Errorf("path = %q, want %q", path, "/tmp/foo.md")
+	}
+}
+
+func TestApplyOverrides_FileArgPreservesHistory(t *testing.T) {
+	cfg := config{
+		FileCmdSave: "cp $PATH /tmp/",
+		FileCmdLoad: "cp /tmp/ $PATH",
+		HistoryFile: "/var/log/todo-history",
+	}
+	got, _ := applyCLIOverrides(cfg, "/tmp/foo.md", false)
+	if got.HistoryFile != "/var/log/todo-history" {
+		t.Errorf("HistoryFile = %q, want preserved", got.HistoryFile)
+	}
+}
+
+func TestApplyOverrides_NoHistoryClearsHistoryFile(t *testing.T) {
+	cfg := config{HistoryFile: "/var/log/todo-history"}
+	got, _ := applyCLIOverrides(cfg, "/tmp/foo.md", true)
+	if got.HistoryFile != "" {
+		t.Errorf("HistoryFile = %q, want empty", got.HistoryFile)
+	}
+}
+
+func TestApplyOverrides_NoHistoryWithoutFileArg(t *testing.T) {
+	cfg := config{
+		FileCmdSave: "cp $PATH /tmp/",
+		FileCmdLoad: "cp /tmp/ $PATH",
+		HistoryFile: "/var/log/todo-history",
+	}
+	got, path := applyCLIOverrides(cfg, "", true)
+	if got.HistoryFile != "" {
+		t.Errorf("HistoryFile = %q, want empty", got.HistoryFile)
+	}
+	if got.FileCmdSave == "" || got.FileCmdLoad == "" {
+		t.Errorf("remote cmds should be preserved when no positional, got %+v", got)
+	}
+	if path != "" {
+		t.Errorf("path = %q, want empty", path)
+	}
+}
+
+func TestApplyOverrides_ExpandsHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	_, path := applyCLIOverrides(config{}, "~/foo.md", false)
+	want := filepath.Join(home, "foo.md")
+	if path != want {
+		t.Errorf("path = %q, want %q", path, want)
+	}
+}
+
+// --- behavioral integration ---
+
+func TestSave_AfterOverride_WritesLocalNotRemote(t *testing.T) {
+	dir := t.TempDir()
+	destDir := filepath.Join(dir, "dest")
+	os.MkdirAll(destDir, 0o755)
+
+	s := newTestState()
+	// Pre-override: remote cmd is set (would normally route through async branch).
+	s.cfg.FileName = "Test"
+	s.cfg.FileCmdSave = "cp $PATH/Test.md " + destDir + "/"
+
+	argFile := filepath.Join(dir, "override.md")
+	newCfg, newPath := applyCLIOverrides(s.cfg, argFile, false)
+	s.cfg = newCfg
+	s.filePath = newPath
+
+	s.save()
+
+	// Local branch is synchronous — saveDone should be untouched (nil).
+	if s.saveDone != nil {
+		t.Errorf("expected synchronous local save; saveDone was set")
+	}
+	if s.dirty {
+		t.Error("expected dirty=false after save")
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "Test.md")); err == nil {
+		t.Error("remote dest file should NOT have been written after override")
+	}
+	items, err := loadItems(argFile)
+	if err != nil {
+		t.Fatalf("loadItems from override path failed: %v", err)
+	}
+	if len(items) != len(s.items) {
+		t.Errorf("override file has %d items, want %d", len(items), len(s.items))
+	}
+}
+
+func TestDelete_AfterNoHistory_SkipsHistoryFile(t *testing.T) {
+	s := newTestState()
+	historyPath := filepath.Join(t.TempDir(), "history.log")
+	s.cfg.HistoryFile = historyPath
+
+	newCfg, _ := applyCLIOverrides(s.cfg, "", true)
+	s.cfg = newCfg
+
+	s.table.Select(0, 0)
+	s.deleteSelected()
+
+	if _, err := os.Stat(historyPath); !os.IsNotExist(err) {
+		t.Errorf("history file should not exist after delete with --no-history, err=%v", err)
+	}
+}
+
 func TestDeleteAppendsMultipleHistoryLines(t *testing.T) {
 	s := newTestState()
 	historyPath := filepath.Join(t.TempDir(), "history.log")
