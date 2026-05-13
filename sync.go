@@ -143,10 +143,13 @@ func applyResolutions(auto []Item, conflicts []conflict, resolutions []resolutio
 				out = append(out, *c.local)
 			}
 			if c.remote != nil {
-				// Remote keeps original ID — but we're keeping both, so the
-				// remote copy needs a fresh ID to avoid duplicate IDs in the file.
 				rcopy := *c.remote
-				rcopy.id = newItemID()
+				// Only reassign id when both sides are kept — otherwise the
+				// remote item is unique and would be needlessly treated as new
+				// on the next merge.
+				if c.local != nil {
+					rcopy.id = newItemID()
+				}
 				out = append(out, rcopy)
 			}
 		}

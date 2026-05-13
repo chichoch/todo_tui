@@ -17,6 +17,12 @@ func (s *state) handleGlobalInput(event *tcell.EventKey) *tcell.EventKey {
 	if s.confirmQuit {
 		return s.handleQuitInput(event)
 	}
+	// While an async save/sync is in flight, swallow input so the user can't
+	// edit items between the goroutine's snapshot and its post-save dirty
+	// flag flip (which would otherwise silently mark those edits clean).
+	if s.savingActive {
+		return nil
+	}
 	if event.Key() == tcell.KeyCtrlC {
 		if s.isDirty() {
 			s.showQuitDialog()
@@ -307,7 +313,7 @@ func (s *state) sync() {
 			return
 		}
 
-		remote, err := loadItems(filepath.Join(pullDir, resolveFileName(cfg)))
+		remote, _, err := loadItems(filepath.Join(pullDir, resolveFileName(cfg)))
 		if err != nil {
 			finish(fmt.Sprintf("Sync pull parse failed: %v", err), false)
 			return
@@ -317,7 +323,7 @@ func (s *state) sync() {
 		basePath := cachePath(cfg)
 		if basePath != "" {
 			if _, statErr := os.Stat(basePath); statErr == nil {
-				if b, err := loadItems(basePath); err == nil {
+				if b, _, err := loadItems(basePath); err == nil {
 					base = b
 				}
 			}
@@ -367,7 +373,7 @@ func (s *state) sync() {
 		defer os.RemoveAll(pushDir)
 
 		pushFile := filepath.Join(pushDir, resolveFileName(cfg))
-		if err := saveItems(pushFile, final); err != nil {
+		if err := saveItems(pushFile, final, nil); err != nil {
 			s.mu.Lock()
 			s.items = final
 			s.dirty = true
@@ -393,7 +399,7 @@ func (s *state) sync() {
 			finish(fmt.Sprintf("Sync local write failed: %v", err), true)
 			return
 		}
-		if err := saveItems(filePath, final); err != nil {
+		if err := saveItems(filePath, final, s.fileCtx); err != nil {
 			s.mu.Lock()
 			s.items = final
 			s.dirty = true
@@ -404,7 +410,7 @@ func (s *state) sync() {
 
 		if basePath != "" {
 			if err := ensureCacheDir(cfg); err == nil {
-				_ = saveItems(basePath, final)
+				_ = saveItems(basePath, final, nil)
 			}
 		}
 
@@ -429,6 +435,7 @@ func (s *state) save() {
 		go func() {
 			status := ""
 			ok := true
+			var tmpFile string
 
 			tmpDir, err := os.MkdirTemp("", "todo_tui_save_")
 			if err != nil {
@@ -437,29 +444,36 @@ func (s *state) save() {
 			}
 
 			if ok {
-				tmpFile := filepath.Join(tmpDir, resolveFileName(s.cfg))
-				if err := saveItems(tmpFile, itemsCopy); err != nil {
+				tmpFile = filepath.Join(tmpDir, resolveFileName(s.cfg))
+				if err := saveItems(tmpFile, itemsCopy, nil); err != nil {
 					status = fmt.Sprintf("Save failed: %v", err)
 					ok = false
 				}
 			}
 
 			if ok {
+				// Expose temp path so a quit-save timeout can surface it for
+				// manual recovery before the goroutine cleans up.
+				s.mu.Lock()
+				s.saveTempPath = tmpFile
+				s.mu.Unlock()
+
 				if err := runFileCmd(s.cfg.FileCmdSave, tmpDir, configFileName(s.cfg)); err != nil {
 					status = fmt.Sprintf("Save cmd failed: %v", err)
 					ok = false
 				}
 			}
 
-			if tmpDir != "" {
-				os.RemoveAll(tmpDir)
-			}
-
 			if ok {
 				status = "Saved via command"
 				s.mu.Lock()
 				s.dirty = false
+				s.saveTempPath = ""
 				s.mu.Unlock()
+			}
+
+			if tmpDir != "" {
+				os.RemoveAll(tmpDir)
 			}
 
 			close(done)
@@ -475,7 +489,7 @@ func (s *state) save() {
 	itemsCopy := make([]Item, len(s.items))
 	copy(itemsCopy, s.items)
 	s.mu.Unlock()
-	if err := saveItems(s.filePath, itemsCopy); err != nil {
+	if err := saveItems(s.filePath, itemsCopy, s.fileCtx); err != nil {
 		s.updateChrome(fmt.Sprintf("Save failed: %v", err))
 		return
 	}

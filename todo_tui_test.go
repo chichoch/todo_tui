@@ -40,6 +40,7 @@ func newTestState() *state {
 		quitDialog:        quitDialog,
 		savingLabel:       savingLabel,
 		items:             []Item{{text: "first"}, {text: "second"}, {text: "third"}},
+		fileCtx:           &fileContext{},
 		filePath:          "",
 		mode:              inputModeAdd,
 		editIndex:         -1,
@@ -288,7 +289,7 @@ func TestSaveWithFileCmdSave(t *testing.T) {
 	}
 
 	// The command should have copied it to dest.
-	items, err := loadItems(filepath.Join(destDir, "Test.md"))
+	items, _, err := loadItems(filepath.Join(destDir, "Test.md"))
 	if err != nil {
 		t.Fatalf("loadItems from dest failed: %v", err)
 	}
@@ -401,7 +402,7 @@ func TestLoadAndSaveItems(t *testing.T) {
 	path := filepath.Join(dir, "test.md")
 	os.WriteFile(path, []byte("# TODO\n- [x] done\n- [ ] pending\n"), 0o644)
 
-	items, err := loadItems(path)
+	items, ctx, err := loadItems(path)
 	if err != nil {
 		t.Fatalf("loadItems failed: %v", err)
 	}
@@ -416,16 +417,59 @@ func TestLoadAndSaveItems(t *testing.T) {
 	}
 
 	items = append(items, Item{text: "new"})
-	if err := saveItems(path, items); err != nil {
+	if err := saveItems(path, items, ctx); err != nil {
 		t.Fatalf("saveItems failed: %v", err)
 	}
 
-	reloaded, err := loadItems(path)
+	reloaded, _, err := loadItems(path)
 	if err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}
 	if len(reloaded) != 3 {
 		t.Fatalf("expected 3 items after save, got %d", len(reloaded))
+	}
+
+	// Verify the header and non-checklist content was preserved.
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "# TODO") {
+		t.Error("expected original '# TODO' header to be preserved")
+	}
+}
+
+func TestSavePreservesNonChecklistContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	original := "# My Notes\n\nSome description here.\n\n- [x] task one\n- [ ] task two\n\nFooter text.\n"
+	os.WriteFile(path, []byte(original), 0o644)
+
+	items, ctx, err := loadItems(path)
+	if err != nil {
+		t.Fatalf("loadItems failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+
+	// Add a new item and save.
+	items = append(items, Item{text: "task three"})
+	if err := saveItems(path, items, ctx); err != nil {
+		t.Fatalf("saveItems failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !strings.Contains(content, "# My Notes") {
+		t.Error("expected '# My Notes' header to be preserved")
+	}
+	if !strings.Contains(content, "Some description here.") {
+		t.Error("expected description text to be preserved")
+	}
+	if !strings.Contains(content, "Footer text.") {
+		t.Error("expected footer text to be preserved")
+	}
+	if !strings.Contains(content, "- [ ] task three") {
+		t.Error("expected new item to be appended")
 	}
 }
 
@@ -434,7 +478,7 @@ func TestLoadItems_AssignsMissingID(t *testing.T) {
 	path := filepath.Join(dir, "test.md")
 	os.WriteFile(path, []byte("# TODO\n- [ ] no id here\n"), 0o644)
 
-	items, err := loadItems(path)
+	items, _, err := loadItems(path)
 	if err != nil {
 		t.Fatalf("loadItems failed: %v", err)
 	}
@@ -447,10 +491,10 @@ func TestSaveItems_RoundTripsID(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.md")
 	original := []Item{{id: "abc1234567890def", text: "one", checked: false}, {id: "feedfacecafebabe", text: "two", checked: true}}
-	if err := saveItems(path, original); err != nil {
+	if err := saveItems(path, original, nil); err != nil {
 		t.Fatalf("saveItems failed: %v", err)
 	}
-	reloaded, err := loadItems(path)
+	reloaded, _, err := loadItems(path)
 	if err != nil {
 		t.Fatalf("loadItems failed: %v", err)
 	}
@@ -605,7 +649,7 @@ func TestSync_FirstRun_NoBase(t *testing.T) {
 	s, fixtureDir, localDir, _ := setupSyncFixture(t)
 
 	// remote has one item
-	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "remote1", text: "from-remote"}}); err != nil {
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "remote1", text: "from-remote"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// local in-memory has one item
@@ -622,7 +666,7 @@ func TestSync_FirstRun_NoBase(t *testing.T) {
 	}
 
 	// local file written with merged
-	saved, err := loadItems(filepath.Join(localDir, "SyncTest.md"))
+	saved, _, err := loadItems(filepath.Join(localDir, "SyncTest.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +675,7 @@ func TestSync_FirstRun_NoBase(t *testing.T) {
 	}
 
 	// remote file written with merged (push round-trip)
-	pushed, err := loadItems(filepath.Join(fixtureDir, "SyncTest.md"))
+	pushed, _, err := loadItems(filepath.Join(fixtureDir, "SyncTest.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -641,7 +685,7 @@ func TestSync_FirstRun_NoBase(t *testing.T) {
 
 	// base file written
 	baseFile := cachePath(s.cfg)
-	base, err := loadItems(baseFile)
+	base, _, err := loadItems(baseFile)
 	if err != nil {
 		t.Fatalf("base file missing or unreadable: %v", err)
 	}
@@ -658,13 +702,13 @@ func TestSync_PushSuccessUpdatesBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	seed := []Item{{id: "x", text: "shared"}}
-	if err := saveItems(cachePath(s.cfg), seed); err != nil {
+	if err := saveItems(cachePath(s.cfg), seed, nil); err != nil {
 		t.Fatal(err)
 	}
 	s.items = []Item{{id: "x", text: "shared"}}
 
 	// Remote added a new item
-	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "x", text: "shared"}, {id: "y", text: "added-on-remote"}}); err != nil {
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "x", text: "shared"}, {id: "y", text: "added-on-remote"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -675,7 +719,7 @@ func TestSync_PushSuccessUpdatesBase(t *testing.T) {
 		t.Errorf("expected clean state after sync")
 	}
 
-	base, err := loadItems(cachePath(s.cfg))
+	base, _, err := loadItems(cachePath(s.cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -691,13 +735,13 @@ func TestSync_PushFailureLeavesBaseUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	seed := []Item{{id: "x", text: "before"}}
-	if err := saveItems(cachePath(s.cfg), seed); err != nil {
+	if err := saveItems(cachePath(s.cfg), seed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveItems(s.filePath, seed); err != nil {
+	if err := saveItems(s.filePath, seed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), seed); err != nil {
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), seed, nil); err != nil {
 		t.Fatal(err)
 	}
 	s.items = []Item{{id: "x", text: "before"}, {id: "y", text: "local-add"}}
@@ -713,7 +757,7 @@ func TestSync_PushFailureLeavesBaseUnchanged(t *testing.T) {
 	}
 
 	// Base file must still match the seed.
-	base, err := loadItems(cachePath(s.cfg))
+	base, _, err := loadItems(cachePath(s.cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +766,7 @@ func TestSync_PushFailureLeavesBaseUnchanged(t *testing.T) {
 	}
 
 	// Local file must also be unchanged.
-	local, err := loadItems(s.filePath)
+	local, _, err := loadItems(s.filePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,7 +985,7 @@ func TestSave_AfterOverride_WritesLocalNotRemote(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(destDir, "Test.md")); err == nil {
 		t.Error("remote dest file should NOT have been written after override")
 	}
-	items, err := loadItems(argFile)
+	items, _, err := loadItems(argFile)
 	if err != nil {
 		t.Fatalf("loadItems from override path failed: %v", err)
 	}
@@ -1001,10 +1045,10 @@ func TestSync_KeepBothResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := []Item{{id: "x", text: "shared"}}
-	if err := saveItems(cachePath(s.cfg), base); err != nil {
+	if err := saveItems(cachePath(s.cfg), base, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "x", text: "remote-edit"}}); err != nil {
+	if err := saveItems(filepath.Join(fixtureDir, "SyncTest.md"), []Item{{id: "x", text: "remote-edit"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	s.items = []Item{{id: "x", text: "local-edit"}}
@@ -1032,11 +1076,11 @@ func TestSync_AbortDuringConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := []Item{{id: "x", text: "shared"}}
-	if err := saveItems(cachePath(s.cfg), base); err != nil {
+	if err := saveItems(cachePath(s.cfg), base, nil); err != nil {
 		t.Fatal(err)
 	}
 	remoteFile := filepath.Join(fixtureDir, "SyncTest.md")
-	if err := saveItems(remoteFile, []Item{{id: "x", text: "remote-edit"}}); err != nil {
+	if err := saveItems(remoteFile, []Item{{id: "x", text: "remote-edit"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	remoteStat, _ := os.Stat(remoteFile)
@@ -1056,7 +1100,7 @@ func TestSync_AbortDuringConflict(t *testing.T) {
 		t.Error("remote file should not be touched after abort")
 	}
 	// Base unchanged.
-	gotBase, _ := loadItems(cachePath(s.cfg))
+	gotBase, _, _ := loadItems(cachePath(s.cfg))
 	if len(gotBase) != 1 || gotBase[0].text != "shared" {
 		t.Errorf("base should be untouched after abort, got %+v", gotBase)
 	}

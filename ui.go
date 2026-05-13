@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -23,6 +24,7 @@ type state struct {
 	statusBar  *tview.TextView
 	helpBox    *tview.TextView
 	items      []Item
+	fileCtx    *fileContext
 	filePath   string
 	cfg        config
 	dirty      bool
@@ -40,8 +42,18 @@ type state struct {
 	quitDialog        *tview.Flex
 	stopped           bool
 
-	savingLabel *tview.TextView
-	saveDone    chan struct{}
+	savingLabel  *tview.TextView
+	saveDone     chan struct{}
+	savingActive bool
+	// saveTempPath holds the in-flight async-save temp file path while a remote
+	// save command is running; cleared on success. Guarded by mu. Used by the
+	// quit-save timeout path to point the user at unsaved content.
+	saveTempPath string
+	// quitSaveTimedOut is set when handleQuitInput's wait on saveDone exceeds
+	// the timeout; main() inspects it after app.Run returns to print a recovery
+	// hint to stderr.
+	quitSaveTimedOut bool
+	quitSaveTempPath string
 
 	conflictOverlay   *tview.Flex
 	conflictLabel     *tview.TextView
@@ -131,8 +143,23 @@ func (s *state) handleQuitInput(event *tcell.EventKey) *tcell.EventKey {
 	if event.Key() == tcell.KeyRune {
 		switch event.Rune() {
 		case 'y', 'Y':
-			s.save()
 			s.confirmQuit = false
+			s.save()
+			// If save() spawned the async remote-save goroutine, wait up to 10s
+			// for completion so the process doesn't exit mid-write. On timeout
+			// stash the temp path; main() prints a recovery hint after the
+			// event loop unwinds.
+			done := s.saveDone
+			if done != nil {
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+					s.mu.Lock()
+					s.quitSaveTimedOut = true
+					s.quitSaveTempPath = s.saveTempPath
+					s.mu.Unlock()
+				}
+			}
 			s.stopped = true
 			s.app.Stop()
 			return nil
@@ -151,11 +178,13 @@ func (s *state) handleQuitInput(event *tcell.EventKey) *tcell.EventKey {
 }
 
 func (s *state) showSaving(msg string) {
+	s.savingActive = true
 	s.savingLabel.SetText(msg)
 	s.pages.ShowPage("saving")
 }
 
 func (s *state) hideSaving() {
+	s.savingActive = false
 	s.pages.HidePage("saving")
 	s.app.SetFocus(s.table)
 }
@@ -217,7 +246,14 @@ func (s *state) handleConflictInput(event *tcell.EventKey) *tcell.EventKey {
 	}
 	c := s.pendingConflicts[s.pendingIndex]
 	if s.syncResume != nil {
-		s.syncResume <- resolution{id: c.id, kind: kind}
+		// Non-blocking: if the goroutine hasn't read the prior send yet
+		// (channel buffer=1 already full), drop this keypress instead of
+		// hanging the UI thread. The user can press again once the overlay
+		// re-renders for the next conflict.
+		select {
+		case s.syncResume <- resolution{id: c.id, kind: kind}:
+		default:
+		}
 	}
 	return nil
 }

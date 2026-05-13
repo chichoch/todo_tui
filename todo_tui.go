@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -22,7 +23,11 @@ func parseCLIArgs(args []string) (file string, noHistory bool, err error) {
 	if fs.NArg() > 1 {
 		return "", false, fmt.Errorf("unexpected extra arguments: %v", fs.Args()[1:])
 	}
-	return fs.Arg(0), noHistory, nil
+	file = fs.Arg(0)
+	if file != "" && !strings.HasSuffix(strings.ToLower(file), ".md") {
+		return "", false, fmt.Errorf("file must have a .md extension: %s", file)
+	}
+	return file, noHistory, nil
 }
 
 func applyCLIOverrides(cfg config, argFile string, noHistory bool) (config, string) {
@@ -61,6 +66,8 @@ func main() {
 	// If a load command is configured, fetch the file to a temp directory.
 	var loadStatus string
 	var items []Item
+	var fileCtx *fileContext
+	var loadedFromRemote bool
 	if cfg.FileCmdLoad != "" {
 		tmpDir, err := os.MkdirTemp("", "todo_tui_load_")
 		if err != nil {
@@ -73,30 +80,31 @@ func main() {
 			loadStatus = fmt.Sprintf("file-cmd-load failed: %v (starting empty)", err)
 		} else {
 			tmpFile := filepath.Join(tmpDir, resolveFileName(cfg))
-			items, err = loadItems(tmpFile)
+			items, fileCtx, err = loadItems(tmpFile)
 			os.RemoveAll(tmpDir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "load: %v\n", err)
 				os.Exit(1)
 			}
+			loadedFromRemote = true
 			// Seed the merge base on first run if missing.
 			if base := cachePath(cfg); base != "" {
 				if _, statErr := os.Stat(base); os.IsNotExist(statErr) {
 					if mkErr := ensureCacheDir(cfg); mkErr == nil {
-						_ = saveItems(base, items)
+						_ = saveItems(base, items, nil)
 					}
 				}
 			}
 		}
 	}
 
-	if items == nil {
+	if !loadedFromRemote {
 		if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "load: %v\n", err)
 			os.Exit(1)
 		}
 		var err error
-		items, err = loadItems(filePath)
+		items, fileCtx, err = loadItems(filePath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "load: %v\n", err)
 			os.Exit(1)
@@ -147,6 +155,7 @@ func main() {
 		statusBar:         statusBar,
 		helpBox:           helpBox,
 		items:             items,
+		fileCtx:           fileCtx,
 		filePath:          filePath,
 		cfg:               cfg,
 		mode:              inputModeAdd,
@@ -273,5 +282,17 @@ func main() {
 
 	if err := app.SetRoot(pages, true).SetFocus(table).Run(); err != nil {
 		panic(err)
+	}
+
+	if s.quitSaveTimedOut {
+		path := s.quitSaveTempPath
+		if path == "" {
+			path = "(unknown; check $TMPDIR for todo_tui_save_*)"
+		}
+		fmt.Fprintf(os.Stderr,
+			"Warning: save command did not finish within 10s on quit.\n"+
+				"Your unsaved checklist is in: %s\n"+
+				"Copy it out before the OS cleans the temp directory.\n",
+			path)
 	}
 }
